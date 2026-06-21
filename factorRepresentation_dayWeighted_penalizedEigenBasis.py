@@ -1200,8 +1200,8 @@ if __name__ == '__main__':
     
     # Define candidate hyperparameter grid
     # (Typically log-spaced or custom ranges)
-    omega_m_grid = [0.01, 0.1, 1.0, 10.0]
-    omega_t_grid = [0.01, 0.1, 1.0, 10.0]
+    omega_m_grid = [0.05, 0.1, 0.2]
+    omega_t_grid = [0.05, 0.1, 0.2]
     
     print("\n" + "="*50)
     print("RUNNING CROSS VALIDATION DEMO FOR FIRST 3 FPCs")
@@ -1230,7 +1230,7 @@ if __name__ == '__main__':
     
     # Fit the 1st FPC using optimal parameters on the full dataset
     alpha1, B1 = fpca_cv.first_FPC_fit(maxit=20, omega_m=best_m1, omega_t=best_t1)
-    fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
+    fpca_cv.plot_eigen_functions(B1, num_points=50, figAngle=-70)
     
     # 2. Tuning and fitting 2nd FPC (conditional on 1st FPC)
     print("\n--- Tuning penalties for 2nd FPC ---")
@@ -1247,7 +1247,7 @@ if __name__ == '__main__':
     
     # Fit the 2nd FPC using optimal parameters on the full dataset
     alpha2, B2 = fpca_cv.subsequent_FPC_fit(maxit=30, omega_m=best_m2, omega_t=best_t2)
-    fpca.plot_eigen_functions(B2, num_points=50, figAngle=-70)
+    fpca_cv.plot_eigen_functions(B2, num_points=50, figAngle=-70)
     
     # 3. Tuning and fitting 3rd FPC (conditional on 1st and 2nd FPCs)
     print("\n--- Tuning penalties for 3rd FPC ---")
@@ -1264,7 +1264,7 @@ if __name__ == '__main__':
     
     # Fit the 3rd FPC using optimal parameters on the full dataset
     alpha3, B3 = fpca_cv.subsequent_FPC_fit(maxit=30, omega_m=best_m3, omega_t=best_t3)
-    fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
+    fpca_cv.plot_eigen_functions(B3, num_points=50, figAngle=-70)
     
     print("\nSequential tuning and fitting completed for the first 3 FPCs!")
     
