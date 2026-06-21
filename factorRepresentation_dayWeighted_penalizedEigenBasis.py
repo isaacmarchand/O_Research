@@ -351,6 +351,290 @@ class FPCA_penalized:
             reconstructed_iv += scores[k] * self.evaluator(BList[k], coords)
         return reconstructed_iv
 
+    def project_to_scores(self, coords, iv, BList):
+        """
+        Projects the given observations (coords and iv) onto the list of eigenfunctions (BList)
+        to estimate the scores using linear regression without intercept.
+        
+        Parameters:
+        - coords: 2D array of shape (n, 2)
+        - iv: 1D array of implied volatilities corresponding to coords
+        - BList: List of 2D B matrices representing the eigenfunctions
+        
+        Returns:
+        - scores: 1D array of length len(BList)
+        """
+        if len(iv) == 0 or len(BList) == 0:
+            return np.zeros(len(BList))
+            
+        X = np.zeros((len(iv), len(BList)))
+        for k in range(len(BList)):
+            X[:, k] = self.evaluator(BList[k], coords)
+            
+        reg = LinearRegression(fit_intercept=False)
+        reg.fit(X, iv)
+        return reg.coef_
+
+    def cross_validate_penalties(self, omega_m_grid, omega_t_grid, n_splits=5, cv_type='day', 
+                                 fpc_index=0, previous_BList=None, threshold=1e-4, maxit=10, 
+                                 d_m=2, d_t=2, random_state=None):
+        """
+        Runs grid search cross-validation to select optimal smoothness hyperparameters (omega_m, omega_t).
+        
+        Parameters:
+        - omega_m_grid: list/array of candidate values for omega_m
+        - omega_t_grid: list/array of candidate values for omega_t
+        - n_splits: number of CV folds
+        - cv_type: 'day' (split days) or 'observation' (split observations within each day)
+        - fpc_index: index of the FPC being fitted (0 for first, >0 for subsequent)
+        - previous_BList: list of B matrices for already fitted FPCs (required if fpc_index > 0)
+        - threshold: convergence threshold for FPC fitting
+        - maxit: maximum iterations for FPC fitting
+        - d_m: order of difference penalty for moneyness
+        - d_t: order of difference penalty for tau
+        - random_state: random seed for reproducibility
+        
+        Returns:
+        - best_omega_m: float
+        - best_omega_t: float
+        - results: list of dicts containing details for each grid point
+        """
+        if cv_type not in ['day', 'observation']:
+            raise ValueError("cv_type must be either 'day' or 'observation'")
+            
+        if fpc_index > 0 and previous_BList is None:
+            raise ValueError("previous_BList must be provided when fpc_index > 0")
+            
+        if previous_BList is None:
+            previous_BList = []
+            
+        folds = self._split_folds(n_splits, cv_type, random_state)
+        
+        best_mse = np.inf
+        best_omega_m = None
+        best_omega_t = None
+        results = []
+        
+        for omega_m in omega_m_grid:
+            for omega_t in omega_t_grid:
+                # Run CV for this grid point
+                mean_val_mse = self._evaluate_grid_point(
+                    omega_m, omega_t, folds, cv_type, fpc_index, previous_BList,
+                    threshold, maxit, d_m, d_t
+                )
+                
+                results.append({
+                    'omega_m': omega_m,
+                    'omega_t': omega_t,
+                    'mean_val_mse': mean_val_mse
+                })
+                
+                print(f"CV Grid: omega_m={omega_m:.4f}, omega_t={omega_t:.4f} -> Mean Val MSE = {mean_val_mse:.8f}")
+                
+                if mean_val_mse < best_mse:
+                    best_mse = mean_val_mse
+                    best_omega_m = omega_m
+                    best_omega_t = omega_t
+                    
+        return best_omega_m, best_omega_t, results
+
+    def _split_folds(self, n_splits, cv_type, random_state):
+        """
+        Generates fold indices/splits for cross-validation.
+        """
+        if cv_type == 'day':
+            indices = np.arange(len(self.cleaned_data))
+            if random_state is not None:
+                rng = np.random.default_rng(random_state)
+                rng.shuffle(indices)
+            else:
+                np.random.shuffle(indices)
+            return np.array_split(indices, n_splits)
+        else:  # cv_type == 'observation'
+            obs_folds_by_day = []
+            for i in range(len(self.cleaned_data)):
+                m_clean, tau_clean, iv_clean = self.cleaned_data[i]
+                n_obs = len(iv_clean)
+                obs_indices = np.arange(n_obs)
+                if random_state is not None:
+                    rng = np.random.default_rng(random_state + i)
+                    rng.shuffle(obs_indices)
+                else:
+                    np.random.shuffle(obs_indices)
+                day_folds = np.array_split(obs_indices, n_splits)
+                obs_folds_by_day.append(day_folds)
+            return obs_folds_by_day
+
+    def _evaluate_grid_point(self, omega_m, omega_t, folds, cv_type, fpc_index, previous_BList,
+                             threshold, maxit, d_m, d_t):
+        """
+        Evaluates a single grid point (omega_m, omega_t) over all folds.
+        """
+        n_splits = len(folds)
+        val_mses = []
+        
+        for fold_idx in range(n_splits):
+            if cv_type == 'day':
+                # The folds are list of arrays of day indices.
+                # Train days: all folds except fold_idx
+                train_idx = np.concatenate([folds[j] for j in range(n_splits) if j != fold_idx])
+                val_idx = folds[fold_idx]
+                
+                fold_mse = self._evaluate_fold_day(
+                    train_idx, val_idx, omega_m, omega_t, fpc_index, previous_BList,
+                    threshold, maxit, d_m, d_t
+                )
+            else:  # cv_type == 'observation'
+                fold_mse = self._evaluate_fold_observation(
+                    folds, fold_idx, omega_m, omega_t, fpc_index, previous_BList,
+                    threshold, maxit, d_m, d_t
+                )
+                
+            if fold_mse is not None:
+                val_mses.append(fold_mse)
+                
+        return np.mean(val_mses) if val_mses else np.inf
+
+    def _evaluate_fold_day(self, train_idx, val_idx, omega_m, omega_t, fpc_index, previous_BList,
+                           threshold, maxit, d_m, d_t):
+        """
+        Fits the model on train days and evaluates on validation days.
+        """
+        # Create a new FPCA_penalized instance for training on the subset of days
+        fpca_train = FPCA_penalized(
+            moneyness=[], tau=[], iv=[],
+            nb_spline_moneyness=self.nb_spline_moneyness,
+            nb_spline_tau=self.nb_spline_tau,
+            order_moneyness=self.order_moneyness,
+            order_tau=self.order_tau,
+            S=[self.S[idx] for idx in train_idx] if self.S is not None else None,
+            r=[self.r[idx] for idx in train_idx] if self.r is not None else None,
+            q=[self.q[idx] for idx in train_idx] if self.q is not None else None,
+            range_moneyness=self.range_moneyness,
+            range_tau=self.range_tau,
+            dailyWeights=None
+        )
+        # Assign train day data directly
+        fpca_train.cleaned_data = [self.cleaned_data[i] for i in train_idx]
+        fpca_train.dailyWeights = np.asarray(self.dailyWeights)[train_idx]
+        fpca_train.BList = list(previous_BList)
+        
+        # Fit the candidate FPC
+        if fpc_index == 0:
+            # We must set scoreMat of appropriate shape before fitting
+            fpca_train.scoreMat = np.zeros((len(train_idx), 1))
+            _, B_new = fpca_train.first_FPC_fit(
+                threshold=threshold, maxit=maxit, omega_m=omega_m, omega_t=omega_t, d_m=d_m, d_t=d_t
+            )
+        else:
+            # Pre-populate scoreMat with dummy values (subsequent_FPC_fit will column_stack it anyway)
+            fpca_train.scoreMat = np.zeros((len(train_idx), len(previous_BList)))
+            _, B_new = fpca_train.subsequent_FPC_fit(
+                threshold=threshold, maxit=maxit, omega_m=omega_m, omega_t=omega_t, d_m=d_m, d_t=d_t
+            )
+            
+        BList_val = previous_BList + [B_new]
+        
+        # Evaluate on validation days
+        val_mses = []
+        for i in val_idx:
+            m_val, tau_val, iv_val = self.cleaned_data[i]
+            if len(iv_val) == 0:
+                continue
+            coords_val = np.column_stack([m_val, tau_val])
+            scores_val = self.project_to_scores(coords_val, iv_val, BList_val)
+            y_hat_val = self.reconstruct_surface(coords_val, BList_val, scores_val)
+            val_mses.append(np.mean((iv_val - y_hat_val)**2))
+            
+        return np.mean(val_mses) if val_mses else None
+
+    def _evaluate_fold_observation(self, fold_obs_splits, fold_idx, omega_m, omega_t, fpc_index, previous_BList,
+                                   threshold, maxit, d_m, d_t):
+        """
+        Fits the model on train observations and evaluates on validation observations.
+        """
+        n_days = len(self.cleaned_data)
+        
+        # Construct training cleaned data for this fold
+        train_cleaned_data = []
+        val_data = []  # Store (coords, iv) for validation
+        
+        for i in range(n_days):
+            m_clean, tau_clean, iv_clean = self.cleaned_data[i]
+            day_folds = fold_obs_splits[i]
+            
+            # Validation indices for this fold
+            val_idx = day_folds[fold_idx]
+            # Training indices (all other folds)
+            train_idx = np.concatenate([day_folds[j] for j in range(len(day_folds)) if j != fold_idx])
+            
+            if len(train_idx) > 0:
+                train_cleaned_data.append((m_clean[train_idx], tau_clean[train_idx], iv_clean[train_idx]))
+            else:
+                train_cleaned_data.append((np.array([]), np.array([]), np.array([])))
+                
+            if len(val_idx) > 0:
+                val_data.append((np.column_stack([m_clean[val_idx], tau_clean[val_idx]]), iv_clean[val_idx], train_idx))
+            else:
+                val_data.append(None)
+                
+        # Create a new FPCA_penalized instance for training on training observations
+        fpca_train = FPCA_penalized(
+            moneyness=[], tau=[], iv=[],
+            nb_spline_moneyness=self.nb_spline_moneyness,
+            nb_spline_tau=self.nb_spline_tau,
+            order_moneyness=self.order_moneyness,
+            order_tau=self.order_tau,
+            S=self.S,
+            r=self.r,
+            q=self.q,
+            range_moneyness=self.range_moneyness,
+            range_tau=self.range_tau,
+            dailyWeights=None
+        )
+        fpca_train.cleaned_data = train_cleaned_data
+        fpca_train.dailyWeights = self.dailyWeights
+        fpca_train.BList = list(previous_BList)
+        
+        # Fit candidate FPC on train observations
+        if fpc_index == 0:
+            fpca_train.scoreMat = np.zeros((n_days, 1))
+            _, B_new = fpca_train.first_FPC_fit(
+                threshold=threshold, maxit=maxit, omega_m=omega_m, omega_t=omega_t, d_m=d_m, d_t=d_t
+            )
+        else:
+            fpca_train.scoreMat = np.zeros((n_days, len(previous_BList)))
+            _, B_new = fpca_train.subsequent_FPC_fit(
+                threshold=threshold, maxit=maxit, omega_m=omega_m, omega_t=omega_t, d_m=d_m, d_t=d_t
+            )
+            
+        BList_val = previous_BList + [B_new]
+        
+        # Evaluate on validation observations
+        val_mses = []
+        for i in range(n_days):
+            val_info = val_data[i]
+            if val_info is None:
+                continue
+            coords_val, iv_val, train_idx = val_info
+            
+            # Project training observations of day i onto the FPCs to get the scores
+            # (using training scores is critical to avoid data leakage)
+            m_clean, tau_clean, iv_clean = self.cleaned_data[i]
+            coords_train = np.column_stack([m_clean[train_idx], tau_clean[train_idx]])
+            iv_train = iv_clean[train_idx]
+            
+            if len(iv_train) == 0:
+                continue
+                
+            scores_train_i = self.project_to_scores(coords_train, iv_train, BList_val)
+            
+            # Predict at validation coordinates using training scores
+            y_hat_val = self.reconstruct_surface(coords_val, BList_val, scores_train_i)
+            val_mses.append(np.mean((iv_val - y_hat_val)**2))
+            
+        return np.mean(val_mses) if val_mses else None
+
     def ivs_to_price_surface(self, coords, iv, day_index=0):
         """
         Computes the Black-Scholes call option price surface from the implied volatility surface.
@@ -766,146 +1050,222 @@ class FPCA_penalized:
         plt.tight_layout()
         plt.show()
 
-#%% USING SPX DATA (dense data)
-with open("/Users/macbook/Documents/O_Research/data/SPX_data/SPX_lists.pkl", "rb") as f:
-    uniqueDates = pickle.load(f)
-    tau = pickle.load(f)
-    moneyness = pickle.load(f)
-    iv = pickle.load(f)
-    S = pickle.load(f)
-    rfRate = pickle.load(f)
-    dividendRate = pickle.load(f)
+#%%
+if __name__ == '__main__':
+    #%% USING SPX DATA (dense data)
+    with open("/Users/macbook/Documents/O_Research/data/SPX_data/SPX_lists.pkl", "rb") as f:
+        uniqueDates = pickle.load(f)
+        tau = pickle.load(f)
+        moneyness = pickle.load(f)
+        iv = pickle.load(f)
+        S = pickle.load(f)
+        rfRate = pickle.load(f)
+        dividendRate = pickle.load(f)
+        
+    # #select small sample to test with
+    # uniqueDates = uniqueDates[0:100]
+    # tau = tau[0:100]
+    # moneyness = moneyness[0:100]
+    # iv = iv[0:100]
+    # S = S[0:100]
+    # rfRate = rfRate[0:100]
+    # dividendRate = dividendRate[0:100]
     
-# #select small sample to test with
-# uniqueDates = uniqueDates[0:100]
-# tau = tau[0:100]
-# moneyness = moneyness[0:100]
-# iv = iv[0:100]
-# S = S[0:100]
-# rfRate = rfRate[0:100]
-# dividendRate = dividendRate[0:100]
-
-logMoneyness = [np.log(m) for m in moneyness]
-sqrtTau = [np.sqrt(t) for t in tau]             #Should probably work with sqrt(tau\) if we use uniformly spaced knots in the B-spline
-
-flattenIV = [v for vDay in iv for v in vDay]
-meanIV = np.mean(flattenIV)
-ivCentered = [v-meanIV for v in iv]
-
-ivLog = [np.log(v) for v in iv]
-
-#%% Estimate the First few FPCs
-fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 10, nb_spline_tau = 12, order_moneyness = 4, order_tau = 4)
-alpha1, B1 = fpca.first_FPC_fit(maxit=20)
-fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
-
-alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30)
-fpca.plot_eigen_functions(B2, num_points=50, figAngle=-70)
-
-alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30)
-fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
-
-# alpha4, B4 = fpca.subsequent_FPC_fit(maxit=30)
-# fpca.plot_eigen_functions(B4, num_points=50, figAngle=-70)
-
-print(fpca.compute_explained_variance())
-
-with open("/Users/macbook/Documents/O_Research/data/SPX_data/SPX_FPCA_ApproxPenal_logM_tau_iv.pkl", "wb") as f:
-    pickle.dump(fpca.scoreMat, f)
-    pickle.dump(fpca.BList, f)
-
-#%% Load Basis representation fit
-fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 10, nb_spline_tau = 12, order_moneyness = 4, order_tau = 4)
-with open("/Users/macbook/Documents/O_Research/data/SPX_data/FPCA_ApproxPenal_logM_tau_iv.pkl", "rb") as f:
-    fpca.scoreMat = pickle.load(f)
-    fpca.BList = pickle.load(f)
+    logMoneyness = [np.log(m) for m in moneyness]
+    sqrtTau = [np.sqrt(t) for t in tau]             #Should probably work with sqrt(tau\) if we use uniformly spaced knots in the B-spline
     
-#%% Measure Static Arbitrage
-nbDays = len(fpca.cleaned_data)
-nbCalendar = np.zeros(nbDays)
-nbButterfly = np.zeros(nbDays)
-for i in range(nbDays):
-    day_scores = fpca.scoreMat[i, :]
-    calendar_metrics, butterfly_metrics = fpca.compute_arbitrage_metrics(day_scores)
-    nbCalendar[i] = np.sum(calendar_metrics < 0)
-    nbButterfly[i] = np.sum(butterfly_metrics < 0)
-
-plt.plot(nbButterfly)
-plt.plot(nbCalendar)  
-
-# Plot violations for the first day
-fpca.plot_arbitrage_violations(0)
+    flattenIV = [v for vDay in iv for v in vDay]
+    meanIV = np.mean(flattenIV)
+    ivCentered = [v-meanIV for v in iv]
     
+    ivLog = [np.log(v) for v in iv]
     
-
-#%% USING DJX DATA (dense data)
-###################################################################################################
-with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_lists.pkl", "rb") as f:
-    uniqueDates = pickle.load(f)
-    tau = pickle.load(f)
-    moneyness = pickle.load(f)
-    iv = pickle.load(f)
-    S = pickle.load(f)
-    rfRate = pickle.load(f)
-    dividendRate = pickle.load(f)
+    #%% Estimate the First few FPCs
+    fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 10, nb_spline_tau = 12, order_moneyness = 4, order_tau = 4)
+    alpha1, B1 = fpca.first_FPC_fit(maxit=20)
+    fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
     
-# #select small sample to test with
-# uniqueDates = uniqueDates[0:100]
-# tau = tau[0:100]
-# moneyness = moneyness[0:100]
-# iv = iv[0:100]
-# S = S[0:100]
-# rfRate = rfRate[0:100]
-# dividendRate = dividendRate[0:100]
-
-logMoneyness = [np.log(m) for m in moneyness]
-sqrtTau = [np.sqrt(t) for t in tau]             #Should probably work with sqrt(tau\) if we use uniformly spaced knots in the B-spline
-
-flattenIV = [v for vDay in iv for v in vDay]
-meanIV = np.mean(flattenIV)
-ivCentered = [v-meanIV for v in iv]
-
-ivLog = [np.log(v) for v in iv]
-#%% Estimate the First few FPCs
-fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
-alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=1, omega_t=3)
-fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
-
-alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=.2, omega_t=.5)
-fpca.plot_eigen_functions(B2, num_points=50, figAngle=-70)
-
-alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30, omega_m=.2, omega_t=.5)
-fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
-
-# alpha4, B4 = fpca.subsequent_FPC_fit(maxit=30)
-# fpca.plot_eigen_functions(B4, num_points=50, figAngle=-70)
-
-print(fpca.compute_explained_variance())
-
-with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_FPCA_DayWeighted_ApproxPenal_logM_tau_iv.pkl", "wb") as f:
-    pickle.dump(fpca.scoreMat, f)
-    pickle.dump(fpca.BList, f)
-
-#%% Load Basis representation fit
-fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 20, nb_spline_tau = 24, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
-with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_FPCA_DayWeighted_ApproxPenal_logM_tau_iv.pkl", "rb") as f:
-    fpca.scoreMat = pickle.load(f)
-    fpca.BList = pickle.load(f)
+    alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30)
+    fpca.plot_eigen_functions(B2, num_points=50, figAngle=-70)
     
-#%% Measure Static Arbitrage
-nbDays = len(fpca.cleaned_data)
-nbCalendar = np.zeros(nbDays)
-nbButterfly = np.zeros(nbDays)
-for i in range(nbDays):
-    day_scores = fpca.scoreMat[i, :]
-    calendar_metrics, butterfly_metrics = fpca.compute_arbitrage_metrics(day_scores)
-    nbCalendar[i] = np.sum(calendar_metrics < 0)
-    nbButterfly[i] = np.sum(butterfly_metrics < 0)
+    alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30)
+    fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
+    
+    # alpha4, B4 = fpca.subsequent_FPC_fit(maxit=30)
+    # fpca.plot_eigen_functions(B4, num_points=50, figAngle=-70)
+    
+    print(fpca.compute_explained_variance())
+    
+    with open("/Users/macbook/Documents/O_Research/data/SPX_data/SPX_FPCA_ApproxPenal_logM_tau_iv.pkl", "wb") as f:
+        pickle.dump(fpca.scoreMat, f)
+        pickle.dump(fpca.BList, f)
+    
+    #%% Load Basis representation fit
+    fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 10, nb_spline_tau = 12, order_moneyness = 4, order_tau = 4)
+    with open("/Users/macbook/Documents/O_Research/data/SPX_data/FPCA_ApproxPenal_logM_tau_iv.pkl", "rb") as f:
+        fpca.scoreMat = pickle.load(f)
+        fpca.BList = pickle.load(f)
+        
+    #%% Measure Static Arbitrage
+    nbDays = len(fpca.cleaned_data)
+    nbCalendar = np.zeros(nbDays)
+    nbButterfly = np.zeros(nbDays)
+    for i in range(nbDays):
+        day_scores = fpca.scoreMat[i, :]
+        calendar_metrics, butterfly_metrics = fpca.compute_arbitrage_metrics(day_scores)
+        nbCalendar[i] = np.sum(calendar_metrics < 0)
+        nbButterfly[i] = np.sum(butterfly_metrics < 0)
+    
+    plt.plot(nbButterfly)
+    plt.plot(nbCalendar)  
+    
+    # Plot violations for the first day
+    fpca.plot_arbitrage_violations(0)
+        
+        
+    
+    #%% USING DJX DATA (dense data)
+    ###################################################################################################
+    with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_lists.pkl", "rb") as f:
+        uniqueDates = pickle.load(f)
+        tau = pickle.load(f)
+        moneyness = pickle.load(f)
+        iv = pickle.load(f)
+        S = pickle.load(f)
+        rfRate = pickle.load(f)
+        dividendRate = pickle.load(f)
+        
+    # #select small sample to test with
+    # uniqueDates = uniqueDates[0:100]
+    # tau = tau[0:100]
+    # moneyness = moneyness[0:100]
+    # iv = iv[0:100]
+    # S = S[0:100]
+    # rfRate = rfRate[0:100]
+    # dividendRate = dividendRate[0:100]
+    
+    logMoneyness = [np.log(m) for m in moneyness]
+    sqrtTau = [np.sqrt(t) for t in tau]             #Should probably work with sqrt(tau\) if we use uniformly spaced knots in the B-spline
+    
+    flattenIV = [v for vDay in iv for v in vDay]
+    meanIV = np.mean(flattenIV)
+    ivCentered = [v-meanIV for v in iv]
+    
+    ivLog = [np.log(v) for v in iv]
+    #%% Estimate the First few FPCs
+    fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
+    alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=1, omega_t=3)
+    fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
+    
+    alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=.2, omega_t=.5)
+    fpca.plot_eigen_functions(B2, num_points=50, figAngle=-70)
+    
+    alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30, omega_m=.2, omega_t=.5)
+    fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
+    
+    # alpha4, B4 = fpca.subsequent_FPC_fit(maxit=30)
+    # fpca.plot_eigen_functions(B4, num_points=50, figAngle=-70)
+    
+    print(fpca.compute_explained_variance())
+    
+    with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_FPCA_DayWeighted_ApproxPenal_logM_tau_iv.pkl", "wb") as f:
+        pickle.dump(fpca.scoreMat, f)
+        pickle.dump(fpca.BList, f)
+    
+    #%% Load Basis representation fit
+    fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 20, nb_spline_tau = 24, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
+    with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_FPCA_DayWeighted_ApproxPenal_logM_tau_iv.pkl", "rb") as f:
+        fpca.scoreMat = pickle.load(f)
+        fpca.BList = pickle.load(f)
+        
+    #%% Measure Static Arbitrage
+    nbDays = len(fpca.cleaned_data)
+    nbCalendar = np.zeros(nbDays)
+    nbButterfly = np.zeros(nbDays)
+    for i in range(nbDays):
+        day_scores = fpca.scoreMat[i, :]
+        calendar_metrics, butterfly_metrics = fpca.compute_arbitrage_metrics(day_scores)
+        nbCalendar[i] = np.sum(calendar_metrics < 0)
+        nbButterfly[i] = np.sum(butterfly_metrics < 0)
+    
+    plt.plot(nbButterfly)
+    plt.plot(nbCalendar)  
+    
+    # Plot violations for the first day
+    fpca.plot_arbitrage_violations(0)
 
-plt.plot(nbButterfly)
-plt.plot(nbCalendar)  
-
-# Plot violations for the first day
-fpca.plot_arbitrage_violations(0)
+    #%% CROSS VALIDATION EXAMPLE FOR ESTIMATING FIRST 3 FPCS
+    # This demonstrates how to run the cross-validation algorithm to choose
+    # optimal smoothness hyperparameters (omega_m, omega_t) for the first 3 FPCs.
+    
+    # Define candidate hyperparameter grid
+    # (Typically log-spaced or custom ranges)
+    omega_m_grid = [0.01, 0.1, 1.0, 10.0]
+    omega_t_grid = [0.01, 0.1, 1.0, 10.0]
+    
+    print("\n" + "="*50)
+    print("RUNNING CROSS VALIDATION DEMO FOR FIRST 3 FPCs")
+    print("="*50)
+    
+    # Initialize a clean FPCA instance for CV tuning
+    fpca_cv = FPCA_penalized(
+        logMoneyness, tau, iv, 
+        nb_spline_moneyness=20, nb_spline_tau=24, 
+        order_moneyness=4, order_tau=4,
+        range_moneyness=[-.15, .15],
+        S=S, r=rfRate, q=dividendRate
+    )
+    
+    # 1. Tuning and fitting 1st FPC
+    print("\n--- Tuning penalties for 1st FPC ---")
+    best_m1, best_t1, cv_res1 = fpca_cv.cross_validate_penalties(
+        omega_m_grid=omega_m_grid,
+        omega_t_grid=omega_t_grid,
+        n_splits=5,
+        cv_type='day',
+        fpc_index=0,
+        random_state=42
+    )
+    print(f"Optimal 1st FPC penalties: omega_m={best_m1}, omega_t={best_t1}")
+    
+    # Fit the 1st FPC using optimal parameters on the full dataset
+    alpha1, B1 = fpca_cv.first_FPC_fit(maxit=20, omega_m=best_m1, omega_t=best_t1)
+    fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
+    
+    # 2. Tuning and fitting 2nd FPC (conditional on 1st FPC)
+    print("\n--- Tuning penalties for 2nd FPC ---")
+    best_m2, best_t2, cv_res2 = fpca_cv.cross_validate_penalties(
+        omega_m_grid=omega_m_grid,
+        omega_t_grid=omega_t_grid,
+        n_splits=5,
+        cv_type='day',
+        fpc_index=1,
+        previous_BList=[B1],
+        random_state=42
+    )
+    print(f"Optimal 2nd FPC penalties: omega_m={best_m2}, omega_t={best_t2}")
+    
+    # Fit the 2nd FPC using optimal parameters on the full dataset
+    alpha2, B2 = fpca_cv.subsequent_FPC_fit(maxit=30, omega_m=best_m2, omega_t=best_t2)
+    fpca.plot_eigen_functions(B2, num_points=50, figAngle=-70)
+    
+    # 3. Tuning and fitting 3rd FPC (conditional on 1st and 2nd FPCs)
+    print("\n--- Tuning penalties for 3rd FPC ---")
+    best_m3, best_t3, cv_res3 = fpca_cv.cross_validate_penalties(
+        omega_m_grid=omega_m_grid,
+        omega_t_grid=omega_t_grid,
+        n_splits=5,
+        cv_type='day',
+        fpc_index=2,
+        previous_BList=[B1, B2],
+        random_state=42
+    )
+    print(f"Optimal 3rd FPC penalties: omega_m={best_m3}, omega_t={best_t3}")
+    
+    # Fit the 3rd FPC using optimal parameters on the full dataset
+    alpha3, B3 = fpca_cv.subsequent_FPC_fit(maxit=30, omega_m=best_m3, omega_t=best_t3)
+    fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
+    
+    print("\nSequential tuning and fitting completed for the first 3 FPCs!")
     
     
