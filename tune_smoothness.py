@@ -93,11 +93,9 @@ def main():
             # We assume the pickle file contains BList or list of B matrices
             previous_BList = pickle.load(f)
             # If the pickle has scoreMat and BList together (like SPX_FPCA_ApproxPenal_logM_tau_iv.pkl), retrieve only the BList
-            if isinstance(previous_BList, tuple) and len(previous_BList) == 2:
-                previous_BList = previous_BList[1]
-            elif isinstance(previous_BList, dict) and 'BList' in previous_BList:
-                previous_BList = previous_BList['BList']
-                
+            if not isinstance(previous_BList, list):
+                previous_BList = pickle.load(f)
+            
         # Slice to the correct length corresponding to fpc_index
         previous_BList = previous_BList[:args.fpc_index]
         print(f"Loaded {len(previous_BList)} previous FPC(s).")
@@ -106,7 +104,7 @@ def main():
     print("Initializing FPCA model instance...")
     fpca = FPCA_penalized(
         logMoneyness, tau, iv,
-        nb_spline_moneyness=20, nb_spline_tau=24,
+        nb_spline_moneyness=30, nb_spline_tau=36,
         order_moneyness=4, order_tau=4,
         S=S, r=rfRate, q=dividendRate,
         range_moneyness = [minLogMoney, maxLogMoney],

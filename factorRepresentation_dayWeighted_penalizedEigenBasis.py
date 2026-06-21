@@ -1154,7 +1154,7 @@ if __name__ == '__main__':
     ivLog = [np.log(v) for v in iv]
     #%% Estimate the First few FPCs
     fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
-    alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=1, omega_t=3)
+    alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=0.05, omega_t=0.05)
     fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
     
     alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=.2, omega_t=.5)
@@ -1173,7 +1173,7 @@ if __name__ == '__main__':
         pickle.dump(fpca.BList, f)
     
     #%% Load Basis representation fit
-    fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 20, nb_spline_tau = 24, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
+    fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
     with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_FPCA_DayWeighted_ApproxPenal_logM_tau_iv.pkl", "rb") as f:
         fpca.scoreMat = pickle.load(f)
         fpca.BList = pickle.load(f)
