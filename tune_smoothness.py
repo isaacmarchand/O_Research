@@ -75,6 +75,11 @@ def main():
         
     logMoneyness = [np.log(m) for m in moneyness]
     
+    maxLogMoney = np.ceil(np.max([np.max(m) for m in logMoneyness])*100)/100
+    minLogMoney = np.floor(np.min([np.min(m) for m in logMoneyness])*100)/100
+    maxTau = np.ceil(np.max([np.max(t) for t in tau])*10)/10
+    minTau = np.floor(np.min([np.min(t) for t in tau])*10)/10
+    
     # 2. Handle previous components
     previous_BList = None
     if args.fpc_index > 0:
@@ -103,7 +108,9 @@ def main():
         logMoneyness, tau, iv,
         nb_spline_moneyness=20, nb_spline_tau=24,
         order_moneyness=4, order_tau=4,
-        S=S, r=rfRate, q=dividendRate
+        S=S, r=rfRate, q=dividendRate,
+        range_moneyness = [minLogMoney, maxLogMoney],
+        range_tau = [minTau, maxTau]
     )
     
     # 4. Run Cross-Validation
