@@ -1124,7 +1124,7 @@ if __name__ == '__main__':
         
         
     
-    #%% USING DJX DATA (dense data)
+    #%% USING DJX DATA (less dense data)
     ###################################################################################################
     with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_lists.pkl", "rb") as f:
         uniqueDates = pickle.load(f)
@@ -1157,10 +1157,10 @@ if __name__ == '__main__':
     alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=0.05, omega_t=0.05)
     fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
     
-    alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=.2, omega_t=.5)
+    alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=.025, omega_t=.025)
     fpca.plot_eigen_functions(B2, num_points=50, figAngle=-70)
     
-    alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30, omega_m=.2, omega_t=.5)
+    alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30, omega_m=.025, omega_t=.025)
     fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
     
     # alpha4, B4 = fpca.subsequent_FPC_fit(maxit=30)
@@ -1193,79 +1193,73 @@ if __name__ == '__main__':
     
     # Plot violations for the first day
     fpca.plot_arbitrage_violations(0)
-
-    #%% CROSS VALIDATION EXAMPLE FOR ESTIMATING FIRST 3 FPCS
-    # This demonstrates how to run the cross-validation algorithm to choose
-    # optimal smoothness hyperparameters (omega_m, omega_t) for the first 3 FPCs.
     
-    # Define candidate hyperparameter grid
-    # (Typically log-spaced or custom ranges)
-    omega_m_grid = [0.05, 0.1, 0.2]
-    omega_t_grid = [0.05, 0.1, 0.2]
+    #%% USING DJX DATA **TRADED** (sparse data)
+    ###################################################################################################
+    with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_lists_traded.pkl", "rb") as f:
+        uniqueDates = pickle.load(f)
+        tau = pickle.load(f)
+        moneyness = pickle.load(f)
+        iv = pickle.load(f)
+        S = pickle.load(f)
+        rfRate = pickle.load(f)
+        dividendRate = pickle.load(f)
+        
+    # #select small sample to test with
+    # uniqueDates = uniqueDates[0:100]
+    # tau = tau[0:100]
+    # moneyness = moneyness[0:100]
+    # iv = iv[0:100]
+    # S = S[0:100]
+    # rfRate = rfRate[0:100]
+    # dividendRate = dividendRate[0:100]
     
-    print("\n" + "="*50)
-    print("RUNNING CROSS VALIDATION DEMO FOR FIRST 3 FPCs")
-    print("="*50)
+    logMoneyness = [np.log(m) for m in moneyness]
+    sqrtTau = [np.sqrt(t) for t in tau]             #Should probably work with sqrt(tau\) if we use uniformly spaced knots in the B-spline
     
-    # Initialize a clean FPCA instance for CV tuning
-    fpca_cv = FPCA_penalized(
-        logMoneyness, tau, iv, 
-        nb_spline_moneyness=20, nb_spline_tau=24, 
-        order_moneyness=4, order_tau=4,
-        range_moneyness=[-.15, .15],
-        S=S, r=rfRate, q=dividendRate
-    )
+    flattenIV = [v for vDay in iv for v in vDay]
+    meanIV = np.mean(flattenIV)
+    ivCentered = [v-meanIV for v in iv]
     
-    # 1. Tuning and fitting 1st FPC
-    print("\n--- Tuning penalties for 1st FPC ---")
-    best_m1, best_t1, cv_res1 = fpca_cv.cross_validate_penalties(
-        omega_m_grid=omega_m_grid,
-        omega_t_grid=omega_t_grid,
-        n_splits=5,
-        cv_type='day',
-        fpc_index=0,
-        random_state=42
-    )
-    print(f"Optimal 1st FPC penalties: omega_m={best_m1}, omega_t={best_t1}")
+    ivLog = [np.log(v) for v in iv]
+    #%% Estimate the First few FPCs
+    fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
+    alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=0.05, omega_t=0.05)
+    fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
     
-    # Fit the 1st FPC using optimal parameters on the full dataset
-    alpha1, B1 = fpca_cv.first_FPC_fit(maxit=20, omega_m=best_m1, omega_t=best_t1)
-    fpca_cv.plot_eigen_functions(B1, num_points=50, figAngle=-70)
+    alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=.025, omega_t=.025)
+    fpca.plot_eigen_functions(B2, num_points=50, figAngle=-70)
     
-    # 2. Tuning and fitting 2nd FPC (conditional on 1st FPC)
-    print("\n--- Tuning penalties for 2nd FPC ---")
-    best_m2, best_t2, cv_res2 = fpca_cv.cross_validate_penalties(
-        omega_m_grid=omega_m_grid,
-        omega_t_grid=omega_t_grid,
-        n_splits=5,
-        cv_type='day',
-        fpc_index=1,
-        previous_BList=[B1],
-        random_state=42
-    )
-    print(f"Optimal 2nd FPC penalties: omega_m={best_m2}, omega_t={best_t2}")
+    alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30, omega_m=.025, omega_t=.025)
+    fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
     
-    # Fit the 2nd FPC using optimal parameters on the full dataset
-    alpha2, B2 = fpca_cv.subsequent_FPC_fit(maxit=30, omega_m=best_m2, omega_t=best_t2)
-    fpca_cv.plot_eigen_functions(B2, num_points=50, figAngle=-70)
+    # alpha4, B4 = fpca.subsequent_FPC_fit(maxit=30)
+    # fpca.plot_eigen_functions(B4, num_points=50, figAngle=-70)
     
-    # 3. Tuning and fitting 3rd FPC (conditional on 1st and 2nd FPCs)
-    print("\n--- Tuning penalties for 3rd FPC ---")
-    best_m3, best_t3, cv_res3 = fpca_cv.cross_validate_penalties(
-        omega_m_grid=omega_m_grid,
-        omega_t_grid=omega_t_grid,
-        n_splits=5,
-        cv_type='day',
-        fpc_index=2,
-        previous_BList=[B1, B2],
-        random_state=42
-    )
-    print(f"Optimal 3rd FPC penalties: omega_m={best_m3}, omega_t={best_t3}")
+    print(fpca.compute_explained_variance())
     
-    # Fit the 3rd FPC using optimal parameters on the full dataset
-    alpha3, B3 = fpca_cv.subsequent_FPC_fit(maxit=30, omega_m=best_m3, omega_t=best_t3)
-    fpca_cv.plot_eigen_functions(B3, num_points=50, figAngle=-70)
+    with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_traded_FPCA_DayWeighted_ApproxPenal_logM_tau_iv.pkl", "wb") as f:
+        pickle.dump(fpca.scoreMat, f)
+        pickle.dump(fpca.BList, f)
     
-    print("\nSequential tuning and fitting completed for the first 3 FPCs!")
+    #%% Load Basis representation fit
+    fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
+    with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_traded_FPCA_DayWeighted_ApproxPenal_logM_tau_iv.pkl", "rb") as f:
+        fpca.scoreMat = pickle.load(f)
+        fpca.BList = pickle.load(f)
+        
+    #%% Measure Static Arbitrage
+    nbDays = len(fpca.cleaned_data)
+    nbCalendar = np.zeros(nbDays)
+    nbButterfly = np.zeros(nbDays)
+    for i in range(nbDays):
+        day_scores = fpca.scoreMat[i, :]
+        calendar_metrics, butterfly_metrics = fpca.compute_arbitrage_metrics(day_scores)
+        nbCalendar[i] = np.sum(calendar_metrics < 0)
+        nbButterfly[i] = np.sum(butterfly_metrics < 0)
     
+    plt.plot(nbButterfly)
+    plt.plot(nbCalendar)  
     
+    # Plot violations for the first day
+    fpca.plot_arbitrage_violations(0)

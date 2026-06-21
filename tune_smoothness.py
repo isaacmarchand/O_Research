@@ -10,7 +10,7 @@ def main():
     parser = argparse.ArgumentParser(description="Tune FPCA smoothness penalties using Cross-Validation.")
     
     # Data arguments
-    parser.add_argument("--data_path", type=str, default="data/DJX_data/DJX_lists.pkl",
+    parser.add_argument("--data_path", type=str, default="data/DJX_data/DJX_lists_traded.pkl",
                         help="Path to the pickle file containing the IVS lists.")
     parser.add_argument("--n_days", type=int, default=None,
                         help="Limit the dataset to the first N days (useful for faster tuning).")
@@ -136,8 +136,8 @@ def main():
     print(f"Optimal omega_t (tau/maturity): {best_t}")
     
     # 5. Save results
-    best_params_file = f"{args.output_prefix}_best_params.json"
-    results_file = f"{args.output_prefix}_results.json"
+    best_params_file = f"{args.output_prefix}_fpc{args.fpc_index+1}_best_params.json"
+    results_file = f"{args.output_prefix}_fpc{args.fpc_index+1}_results.json"
     
     best_params_data = {
         "best_omega_m": best_m,
