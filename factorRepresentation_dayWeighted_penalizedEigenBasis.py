@@ -470,7 +470,11 @@ class FPCA_penalized:
         """
         Evaluates a single grid point (omega_m, omega_t) over all folds.
         """
-        n_splits = len(folds)
+        if cv_type == 'day':
+            n_splits = len(folds)
+        else:
+            n_splits = len(folds[0]) if len(folds) > 0 else 0
+            
         val_mses = []
         
         for fold_idx in range(n_splits):
