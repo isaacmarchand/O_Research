@@ -55,7 +55,7 @@ class FPCA_penalized:
         #Create list of Bs containing all the matrix B fitted so far for the FPCs 
         self.BList = []
        
-    def first_FPC_fit(self, threshold = 1e-4, maxit = 10, omega_m = 1.0, omega_t = 1.0, d_m = 2, d_t = 2):
+    def first_FPC_fit(self, threshold = 1e-4, maxit = 10, omega_m = 1.0, omega_t = 1.0, d_m = 3, d_t = 2):
         """
         Estimate the first FPC and it's scores
 
@@ -175,7 +175,7 @@ class FPCA_penalized:
         self.BList.append(B)
         return scores, B
         
-    def subsequent_FPC_fit(self, threshold = 1e-4, maxit = 10, omega_m = 1.0, omega_t = 1.0, d_m = 2, d_t = 2):
+    def subsequent_FPC_fit(self, threshold = 1e-4, maxit = 10, omega_m = 1.0, omega_t = 1.0, d_m = 3, d_t = 2):
         """
         Estimate the subsequent FPC and their scores conditional on the FPC being ortogonL TO ll previous FPCs
 
