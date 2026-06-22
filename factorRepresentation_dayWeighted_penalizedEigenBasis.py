@@ -1109,7 +1109,8 @@ class FPCA_penalized:
             'vertical_violation_sum': vert_sum,
             'butterfly_violations': butt_violations,
             'butterfly_violation_sum': butt_sum,
-            'total_violations': total_violations
+            'total_violations': total_violations,
+            'total_nb_observations': len(call_prices)
         }
 
     def _check_vertical_and_butterfly_arbitrage(self, call_prices, strikes, maturities, r_val, tolerance):
