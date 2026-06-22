@@ -1054,6 +1054,183 @@ class FPCA_penalized:
         plt.tight_layout()
         plt.show()
 
+    def measure_raw_arbitrage(self, day_index, tolerance=1e-8):
+        """
+        Measures static arbitrage in the raw data for a given day.
+        
+        Parameters:
+        - day_index: Index of the day to analyze.
+        - tolerance: Small threshold to ignore tiny numerical violations.
+        
+        Returns:
+        - summary: A dictionary containing:
+          - 'calendar_violations': Number of calendar spread violations.
+          - 'calendar_violation_sum': Sum of calendar spread violation magnitudes.
+          - 'vertical_violations': Number of call spread (vertical) violations.
+          - 'vertical_violation_sum': Sum of call spread violation magnitudes.
+          - 'butterfly_violations': Number of butterfly spread (convexity) violations.
+          - 'butterfly_violation_sum': Sum of butterfly spread violation magnitudes.
+          - 'total_violations': Total number of raw arbitrage violations.
+        """
+        m_clean, tau_clean, iv_clean = self.cleaned_data[day_index]
+        if len(iv_clean) == 0:
+            return {
+                'calendar_violations': 0, 'calendar_violation_sum': 0.0,
+                'vertical_violations': 0, 'vertical_violation_sum': 0.0,
+                'butterfly_violations': 0, 'butterfly_violation_sum': 0.0,
+                'total_violations': 0
+            }
+            
+        coords = np.column_stack([m_clean, tau_clean])
+        call_prices = self.ivs_to_price_surface(coords, iv_clean, day_index=day_index)
+        
+        S_val = self.S[day_index] if self.S is not None and day_index < len(self.S) else 1.0
+        r_val = self.r[day_index] if self.r is not None and day_index < len(self.r) else 0.0
+        
+        strikes = S_val * np.exp(m_clean)
+        
+        # Round maturities to group options on the same day
+        maturities = np.round(tau_clean, 6)
+        
+        vert_violations, vert_sum, butt_violations, butt_sum = self._check_vertical_and_butterfly_arbitrage(
+            call_prices, strikes, maturities, r_val, tolerance
+        )
+        
+        cal_violations, cal_sum = self._check_calendar_arbitrage(
+            call_prices, strikes, maturities, tolerance
+        )
+        
+        total_violations = vert_violations + butt_violations + cal_violations
+        
+        return {
+            'calendar_violations': cal_violations,
+            'calendar_violation_sum': cal_sum,
+            'vertical_violations': vert_violations,
+            'vertical_violation_sum': vert_sum,
+            'butterfly_violations': butt_violations,
+            'butterfly_violation_sum': butt_sum,
+            'total_violations': total_violations
+        }
+
+    def _check_vertical_and_butterfly_arbitrage(self, call_prices, strikes, maturities, r_val, tolerance):
+        """
+        Checks vertical (call spread) and butterfly spread violations for each maturity slice.
+        """
+        vert_violations = 0
+        vert_sum = 0.0
+        butt_violations = 0
+        butt_sum = 0.0
+        
+        unique_mats = np.unique(maturities)
+        for mat in unique_mats:
+            mask = (maturities == mat)
+            mat_calls = call_prices[mask]
+            mat_strikes = strikes[mask]
+            
+            # Sort by strike
+            sort_idx = np.argsort(mat_strikes)
+            c = mat_calls[sort_idx]
+            k = mat_strikes[sort_idx]
+            
+            n = len(c)
+            if n < 2:
+                continue
+                
+            # Vertical spread check:
+            # 1. Monotonicity: c[j] >= c[j+1]
+            # 2. Maximum value: c[j] - c[j+1] <= e^(-r*tau) * (k[j+1] - k[j])
+            if hasattr(r_val, "__len__") and not isinstance(r_val, (str, bytes)):
+                r_arr = np.asarray(r_val)
+                mat_r = r_arr[mask]
+                mat_r_sorted = mat_r[sort_idx]
+                discount = np.exp(-mat_r_sorted * mat)
+            else:
+                discount = np.repeat(np.exp(-r_val * mat), n)
+                
+            for j in range(n - 1):
+                # Check monotonicity
+                if c[j] < c[j+1] - tolerance:
+                    vert_violations += 1
+                    vert_sum += (c[j+1] - c[j])
+                
+                # Check call spread value bound
+                max_diff = discount[j] * (k[j+1] - k[j])
+                if (c[j] - c[j+1]) > max_diff + tolerance:
+                    vert_violations += 1
+                    vert_sum += ((c[j] - c[j+1]) - max_diff)
+            
+            # Butterfly spread check (convexity):
+            # c[j] <= lambda * c[j-1] + (1 - lambda) * c[j+1]
+            for j in range(1, n - 1):
+                width = k[j+1] - k[j-1]
+                if width <= 1e-10:
+                    continue
+                lambd = (k[j+1] - k[j]) / width
+                c_convex = lambd * c[j-1] + (1.0 - lambd) * c[j+1]
+                if c[j] > c_convex + tolerance:
+                    butt_violations += 1
+                    butt_sum += (c[j] - c_convex)
+                    
+        return vert_violations, vert_sum, butt_violations, butt_sum
+
+    def _check_calendar_arbitrage(self, call_prices, strikes, maturities, tolerance):
+        """
+        Checks calendar spread violations between consecutive maturity slices.
+        """
+        cal_violations = 0
+        cal_sum = 0.0
+        
+        unique_mats = np.sort(np.unique(maturities))
+        if len(unique_mats) < 2:
+            return cal_violations, cal_sum
+            
+        for i in range(len(unique_mats) - 1):
+            mat_a = unique_mats[i]
+            mat_b = unique_mats[i+1]
+            
+            mask_a = (maturities == mat_a)
+            mask_b = (maturities == mat_b)
+            
+            calls_a = call_prices[mask_a]
+            strikes_a = strikes[mask_a]
+            
+            calls_b = call_prices[mask_b]
+            strikes_b = strikes[mask_b]
+            
+            # Find matching strikes by rounding them to 2 decimal places to handle float precision
+            rounded_a = np.round(strikes_a, 2)
+            rounded_b = np.round(strikes_b, 2)
+            
+            # Map rounded strike to call price
+            dict_a = {rounded_a[j]: calls_a[j] for j in range(len(rounded_a))}
+            
+            for j in range(len(rounded_b)):
+                strk_b = rounded_b[j]
+                if strk_b in dict_a:
+                    call_a = dict_a[strk_b]
+                    call_b = calls_b[j]
+                    
+                    # Calendar spread: call price must be non-decreasing with maturity
+                    if call_b < call_a - tolerance:
+                        cal_violations += 1
+                        cal_sum += (call_a - call_b)
+                        
+        return cal_violations, cal_sum
+
+    def measure_all_raw_arbitrage(self, tolerance=1e-8):
+        """
+        Measures static arbitrage in the raw data for all days.
+        
+        Returns:
+        - DataFrame containing daily arbitrage violation summaries.
+        """
+        records = []
+        for i in range(len(self.cleaned_data)):
+            summary = self.measure_raw_arbitrage(i, tolerance=tolerance)
+            summary['day_index'] = i
+            records.append(summary)
+        return pd.DataFrame(records)
+
 #%%
 if __name__ == '__main__':
     #%% USING SPX DATA (dense data)
