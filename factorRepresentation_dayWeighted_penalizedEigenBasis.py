@@ -1262,8 +1262,9 @@ if __name__ == '__main__':
         nbCalendar[i] = np.sum(calendar_metrics < 0)
         nbButterfly[i] = np.sum(butterfly_metrics < 0)
     
-    plt.plot(nbButterfly)
-    plt.plot(nbCalendar)  
+    plt.plot(nbButterfly/(50*50))
+    plt.plot(nbCalendar/(50*50))  
     
     # Plot violations for the first day
     fpca.plot_arbitrage_violations(0)
+# %%
