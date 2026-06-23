@@ -1066,19 +1066,36 @@ class FPCA_penalized:
         - summary: A dictionary containing:
           - 'calendar_violations': Number of calendar spread violations.
           - 'calendar_violation_sum': Sum of calendar spread violation magnitudes.
+          - 'calendar_profit_per_dollar_avg': Average money made per dollar invested for calendar spreads.
+          - 'calendar_profit_per_dollar_max': Maximum money made per dollar invested for calendar spreads.
           - 'vertical_violations': Number of call spread (vertical) violations.
           - 'vertical_violation_sum': Sum of call spread violation magnitudes.
+          - 'vertical_profit_per_dollar_avg': Average money made per dollar invested for vertical spreads.
+          - 'vertical_profit_per_dollar_max': Maximum money made per dollar invested for vertical spreads.
           - 'butterfly_violations': Number of butterfly spread (convexity) violations.
           - 'butterfly_violation_sum': Sum of butterfly spread violation magnitudes.
+          - 'butterfly_profit_per_dollar_avg': Average money made per dollar invested for butterfly spreads.
+          - 'butterfly_profit_per_dollar_max': Maximum money made per dollar invested for butterfly spreads.
           - 'total_violations': Total number of raw arbitrage violations.
+          - 'total_nb_observations': Total number of observations on the given day.
         """
         m_clean, tau_clean, iv_clean = self.cleaned_data[day_index]
         if len(iv_clean) == 0:
             return {
-                'calendar_violations': 0, 'calendar_violation_sum': 0.0,
-                'vertical_violations': 0, 'vertical_violation_sum': 0.0,
-                'butterfly_violations': 0, 'butterfly_violation_sum': 0.0,
-                'total_violations': 0
+                'calendar_violations': 0,
+                'calendar_violation_sum': 0.0,
+                'calendar_profit_per_dollar_avg': 0.0,
+                'calendar_profit_per_dollar_max': 0.0,
+                'vertical_violations': 0,
+                'vertical_violation_sum': 0.0,
+                'vertical_profit_per_dollar_avg': 0.0,
+                'vertical_profit_per_dollar_max': 0.0,
+                'butterfly_violations': 0,
+                'butterfly_violation_sum': 0.0,
+                'butterfly_profit_per_dollar_avg': 0.0,
+                'butterfly_profit_per_dollar_max': 0.0,
+                'total_violations': 0,
+                'total_nb_observations': 0
             }
             
         coords = np.column_stack([m_clean, tau_clean])
@@ -1092,23 +1109,30 @@ class FPCA_penalized:
         # Round maturities to group options on the same day
         maturities = np.round(tau_clean, 6)
         
-        vert_violations, vert_sum, butt_violations, butt_sum = self._check_vertical_and_butterfly_arbitrage(
+        vert_violations, vert_sum, vert_returns, butt_violations, butt_sum, butt_returns = self._check_vertical_and_butterfly_arbitrage(
             call_prices, strikes, maturities, r_val, tolerance
         )
         
-        cal_violations, cal_sum = self._check_calendar_arbitrage(
+        cal_violations, cal_sum, cal_returns = self._check_calendar_arbitrage(
             call_prices, strikes, maturities, tolerance
         )
         
         total_violations = vert_violations + butt_violations + cal_violations
         
+        # In comments are the arbitragre profits that might not really be write
         return {
             'calendar_violations': cal_violations,
             'calendar_violation_sum': cal_sum,
+            #'calendar_profit_per_dollar_avg': np.mean(cal_returns) if len(cal_returns) > 0 else 0.0,
+            #'calendar_profit_per_dollar_max': np.max(cal_returns) if len(cal_returns) > 0 else 0.0,
             'vertical_violations': vert_violations,
             'vertical_violation_sum': vert_sum,
+            #'vertical_profit_per_dollar_avg': np.mean(vert_returns) if len(vert_returns) > 0 else 0.0,
+            #'vertical_profit_per_dollar_max': np.max(vert_returns) if len(vert_returns) > 0 else 0.0,
             'butterfly_violations': butt_violations,
             'butterfly_violation_sum': butt_sum,
+            #'butterfly_profit_per_dollar_avg': np.mean(butt_returns) if len(butt_returns) > 0 else 0.0,
+            #'butterfly_profit_per_dollar_max': np.max(butt_returns) if len(butt_returns) > 0 else 0.0,
             'total_violations': total_violations,
             'total_nb_observations': len(call_prices)
         }
@@ -1116,11 +1140,21 @@ class FPCA_penalized:
     def _check_vertical_and_butterfly_arbitrage(self, call_prices, strikes, maturities, r_val, tolerance):
         """
         Checks vertical (call spread) and butterfly spread violations for each maturity slice.
+        
+        Returns:
+        - vert_violations: Number of vertical spread violations.
+        - vert_sum: Sum of vertical spread violation magnitudes.
+        - vertical_returns: List of returns (profit per dollar invested) for each vertical violation.
+        - butt_violations: Number of butterfly spread violations.
+        - butt_sum: Sum of butterfly spread violation magnitudes.
+        - butterfly_returns: List of returns (profit per dollar invested) for each butterfly violation.
         """
         vert_violations = 0
         vert_sum = 0.0
+        vertical_returns = []
         butt_violations = 0
         butt_sum = 0.0
+        butterfly_returns = []
         
         unique_mats = np.unique(maturities)
         for mat in unique_mats:
@@ -1152,13 +1186,23 @@ class FPCA_penalized:
                 # Check monotonicity
                 if c[j] < c[j+1] - tolerance:
                     vert_violations += 1
-                    vert_sum += (c[j+1] - c[j])
+                    violation_mag = c[j+1] - c[j]
+                    vert_sum += violation_mag
+                    # Arbitrage strategy: Buy the cheaper c[j] and sell the more expensive c[j+1].
+                    # Profit = c[j+1] - c[j]
+                    # Investment = c[j] (price paid for the long option)
+                    vertical_returns.append(violation_mag / max(c[j], 1e-10))
                 
                 # Check call spread value bound
                 max_diff = discount[j] * (k[j+1] - k[j])
                 if (c[j] - c[j+1]) > max_diff + tolerance:
                     vert_violations += 1
-                    vert_sum += ((c[j] - c[j+1]) - max_diff)
+                    violation_mag = (c[j] - c[j+1]) - max_diff
+                    vert_sum += violation_mag
+                    # Arbitrage strategy: Sell c[j], buy c[j+1], and buy a risk-free bond of value max_diff.
+                    # Profit = (c[j] - c[j+1]) - max_diff
+                    # Investment = c[j+1] + max_diff (cost of the long option plus risk-free bond deposit)
+                    vertical_returns.append(violation_mag / max(c[j+1] + max_diff, 1e-10))
             
             # Butterfly spread check (convexity):
             # c[j] <= lambda * c[j-1] + (1 - lambda) * c[j+1]
@@ -1170,20 +1214,31 @@ class FPCA_penalized:
                 c_convex = lambd * c[j-1] + (1.0 - lambd) * c[j+1]
                 if c[j] > c_convex + tolerance:
                     butt_violations += 1
-                    butt_sum += (c[j] - c_convex)
+                    violation_mag = c[j] - c_convex
+                    butt_sum += violation_mag
+                    # Arbitrage strategy: Sell c[j], buy the outer options combination.
+                    # Profit = c[j] - c_convex
+                    # Investment = c_convex (price paid for the outer long options)
+                    butterfly_returns.append(violation_mag / max(c_convex, 1e-10))
                     
-        return vert_violations, vert_sum, butt_violations, butt_sum
+        return vert_violations, vert_sum, vertical_returns, butt_violations, butt_sum, butterfly_returns
 
     def _check_calendar_arbitrage(self, call_prices, strikes, maturities, tolerance):
         """
         Checks calendar spread violations between consecutive maturity slices.
+        
+        Returns:
+        - cal_violations: Number of calendar violations.
+        - cal_sum: Sum of calendar violation magnitudes.
+        - calendar_returns: List of returns (profit per dollar invested) for each calendar violation.
         """
         cal_violations = 0
         cal_sum = 0.0
+        calendar_returns = []
         
         unique_mats = np.sort(np.unique(maturities))
         if len(unique_mats) < 2:
-            return cal_violations, cal_sum
+            return cal_violations, cal_sum, calendar_returns
             
         for i in range(len(unique_mats) - 1):
             mat_a = unique_mats[i]
@@ -1214,9 +1269,14 @@ class FPCA_penalized:
                     # Calendar spread: call price must be non-decreasing with maturity
                     if call_b < call_a - tolerance:
                         cal_violations += 1
-                        cal_sum += (call_a - call_b)
+                        violation_mag = call_a - call_b
+                        cal_sum += violation_mag
+                        # Arbitrage strategy: Buy call_b, sell call_a.
+                        # Profit = call_a - call_b
+                        # Investment = call_b (price paid for the long option)
+                        calendar_returns.append(violation_mag / max(call_b, 1e-10))
                         
-        return cal_violations, cal_sum
+        return cal_violations, cal_sum, calendar_returns
 
     def measure_all_raw_arbitrage(self, tolerance=1e-8):
         """
