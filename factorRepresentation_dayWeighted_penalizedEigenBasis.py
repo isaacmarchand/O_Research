@@ -55,7 +55,7 @@ class FPCA_penalized:
         #Create list of Bs containing all the matrix B fitted so far for the FPCs 
         self.BList = []
        
-    def first_FPC_fit(self, threshold = 1e-4, maxit = 10, omega_m = 1.0, omega_t = 1.0, d_m = 3, d_t = 2):
+    def first_FPC_fit(self, threshold = 1e-4, maxit = 10, omega_m = 1.0, omega_m2 = 0.0, omega_t = 1.0, d_m = 2, d_m2 = 3, d_t = 2):
         """
         Estimate the first FPC and it's scores
 
@@ -63,8 +63,10 @@ class FPCA_penalized:
         - treshold: indicate what change in MSE do we consider as reaching convergence
         - maxit: maximum number of iterations
         - omega_m: penalty weight for the moneyness dimension
+        - omega_m2: penalty weight for the second moneyness dimension penalty
         - omega_t: penalty weight for the tau dimension
         - d_m: order of the difference penalty for moneyness
+        - d_m2: order of the second difference penalty for moneyness
         - d_t: order of the difference penalty for tau
 
         Returns:
@@ -90,13 +92,15 @@ class FPCA_penalized:
         S_m = self.nb_spline_moneyness
         S_tau = self.nb_spline_tau
         D_diff_m = np.diff(np.eye(S_m), n=d_m, axis=0)
+        D_diff_m2 = np.diff(np.eye(S_m), n=d_m2, axis=0)
         D_diff_t = np.diff(np.eye(S_tau), n=d_t, axis=0)
         
         # Note: Row-major (C-style) Kronecker order used here
         # Note: Row-major (C-style) Kronecker order used here
         P_m = np.kron(D_diff_m.T @ D_diff_m, np.eye(S_tau))
+        P_m2 = np.kron(D_diff_m2.T @ D_diff_m2, np.eye(S_tau))
         P_t = np.kron(np.eye(S_m), D_diff_t.T @ D_diff_t)
-        P = omega_m * P_m + omega_t * P_t
+        P = omega_m * P_m + omega_m2 * P_m2 + omega_t * P_t
         
         while j < maxit:
             scores = []
@@ -175,7 +179,7 @@ class FPCA_penalized:
         self.BList.append(B)
         return scores, B
         
-    def subsequent_FPC_fit(self, threshold = 1e-4, maxit = 10, omega_m = 1.0, omega_t = 1.0, d_m = 3, d_t = 2):
+    def subsequent_FPC_fit(self, threshold = 1e-4, maxit = 10, omega_m = 1.0, omega_m2 = 0.0, omega_t = 1.0, d_m = 2, d_m2 = 3, d_t = 2):
         """
         Estimate the subsequent FPC and their scores conditional on the FPC being ortogonL TO ll previous FPCs
 
@@ -183,8 +187,10 @@ class FPCA_penalized:
         - treshold: indicate what change in MSE do we consider as reaching convergence
         - maxit: maximum number of iterations
         - omega_m: penalty weight for the moneyness dimension
+        - omega_m2: penalty weight for the second moneyness dimension penalty
         - omega_t: penalty weight for the tau dimension
         - d_m: order of the difference penalty for moneyness
+        - d_m2: order of the second difference penalty for moneyness
         - d_t: order of the difference penalty for tau
 
         Returns:
@@ -213,12 +219,14 @@ class FPCA_penalized:
         K = self.nb_spline_moneyness
         L = self.nb_spline_tau
         D_diff_m = np.diff(np.eye(K), n=d_m, axis=0)
+        D_diff_m2 = np.diff(np.eye(K), n=d_m2, axis=0)
         D_diff_t = np.diff(np.eye(L), n=d_t, axis=0)
         
         # Note: Row-major (C-style) Kronecker order used here
         P_m = np.kron(D_diff_m.T @ D_diff_m, np.eye(L))
+        P_m2 = np.kron(D_diff_m2.T @ D_diff_m2, np.eye(L))
         P_t = np.kron(np.eye(K), D_diff_t.T @ D_diff_t)
-        P = omega_m * P_m + omega_t * P_t
+        P = omega_m * P_m + omega_m2 * P_m2 + omega_t * P_t
         
         while j < maxit:
             mse_list = []  
@@ -375,16 +383,17 @@ class FPCA_penalized:
         reg.fit(X, iv)
         return reg.coef_
 
-    def cross_validate_penalties(self, omega_m_grid, omega_t_grid, n_splits=5, cv_type='rolling', 
+    def cross_validate_penalties(self, omega_m_grid, omega_t_grid, omega_m2_grid=None, n_splits=5, cv_type='rolling', 
                                  fpc_index=0, previous_BList=None, threshold=1e-4, maxit=10, 
-                                 d_m=2, d_t=2, random_state=None,
+                                 d_m=2, d_m2=3, d_t=2, random_state=None,
                                  train_window_size=None, test_window_size=None):
         """
-        Runs grid search cross-validation to select optimal smoothness hyperparameters (omega_m, omega_t).
+        Runs grid search cross-validation to select optimal smoothness hyperparameters (omega_m, omega_m2, omega_t).
         
         Parameters:
         - omega_m_grid: list/array of candidate values for omega_m
         - omega_t_grid: list/array of candidate values for omega_t
+        - omega_m2_grid: list/array of candidate values for omega_m2. If None, defaults to [0.0].
         - n_splits: number of CV folds
         - cv_type: 'rolling' (rolling/expanding window time-series split), 'day' (random split days) or 'observation' (split observations within each day)
         - fpc_index: index of the FPC being fitted (0 for first, >0 for subsequent)
@@ -392,6 +401,7 @@ class FPCA_penalized:
         - threshold: convergence threshold for FPC fitting
         - maxit: maximum iterations for FPC fitting
         - d_m: order of difference penalty for moneyness
+        - d_m2: order of second difference penalty for moneyness
         - d_t: order of difference penalty for tau
         - random_state: random seed for reproducibility
         - train_window_size: size of the rolling training window (int). If None, uses an expanding window (all past data).
@@ -399,6 +409,7 @@ class FPCA_penalized:
         
         Returns:
         - best_omega_m: float
+        - best_omega_m2: float
         - best_omega_t: float
         - results: list of dicts containing details for each grid point
         """
@@ -411,35 +422,42 @@ class FPCA_penalized:
         if previous_BList is None:
             previous_BList = []
             
+        if omega_m2_grid is None:
+            omega_m2_grid = [0.0]
+            
         folds = self._split_folds(n_splits, cv_type, random_state, train_window_size, test_window_size)
         
         best_mse = np.inf
         best_omega_m = None
+        best_omega_m2 = None
         best_omega_t = None
         results = []
         
         for omega_m in omega_m_grid:
-            for omega_t in omega_t_grid:
-                # Run CV for this grid point
-                mean_val_mse = self._evaluate_grid_point(
-                    omega_m, omega_t, folds, cv_type, fpc_index, previous_BList,
-                    threshold, maxit, d_m, d_t
-                )
-                
-                results.append({
-                    'omega_m': omega_m,
-                    'omega_t': omega_t,
-                    'mean_val_mse': mean_val_mse
-                })
-                
-                print(f"CV Grid: omega_m={omega_m:.4f}, omega_t={omega_t:.4f} -> Mean Val MSE = {mean_val_mse:.8f}")
-                
-                if mean_val_mse < best_mse:
-                    best_mse = mean_val_mse
-                    best_omega_m = omega_m
-                    best_omega_t = omega_t
+            for omega_m2 in omega_m2_grid:
+                for omega_t in omega_t_grid:
+                    # Run CV for this grid point
+                    mean_val_mse = self._evaluate_grid_point(
+                        omega_m, omega_m2, omega_t, folds, cv_type, fpc_index, previous_BList,
+                        threshold, maxit, d_m, d_m2, d_t
+                    )
                     
-        return best_omega_m, best_omega_t, results
+                    results.append({
+                        'omega_m': omega_m,
+                        'omega_m2': omega_m2,
+                        'omega_t': omega_t,
+                        'mean_val_mse': mean_val_mse
+                    })
+                    
+                    print(f"CV Grid: omega_m={omega_m:.4f}, omega_m2={omega_m2:.4f}, omega_t={omega_t:.4f} -> Mean Val MSE = {mean_val_mse:.8f}")
+                    
+                    if mean_val_mse < best_mse:
+                        best_mse = mean_val_mse
+                        best_omega_m = omega_m
+                        best_omega_m2 = omega_m2
+                        best_omega_t = omega_t
+                        
+        return best_omega_m, best_omega_m2, best_omega_t, results
 
     def _split_folds(self, n_splits, cv_type, random_state, train_window_size=None, test_window_size=None):
         """
@@ -499,10 +517,10 @@ class FPCA_penalized:
                 obs_folds_by_day.append(day_folds)
             return obs_folds_by_day
 
-    def _evaluate_grid_point(self, omega_m, omega_t, folds, cv_type, fpc_index, previous_BList,
-                             threshold, maxit, d_m, d_t):
+    def _evaluate_grid_point(self, omega_m, omega_m2, omega_t, folds, cv_type, fpc_index, previous_BList,
+                             threshold, maxit, d_m, d_m2, d_t):
         """
-        Evaluates a single grid point (omega_m, omega_t) over all folds.
+        Evaluates a single grid point (omega_m, omega_m2, omega_t) over all folds.
         """
         if cv_type in ['day', 'rolling']:
             n_splits = len(folds)
@@ -519,19 +537,19 @@ class FPCA_penalized:
                 val_idx = folds[fold_idx]
                 
                 fold_mse = self._evaluate_fold_day(
-                    train_idx, val_idx, omega_m, omega_t, fpc_index, previous_BList,
-                    threshold, maxit, d_m, d_t
+                    train_idx, val_idx, omega_m, omega_m2, omega_t, fpc_index, previous_BList,
+                    threshold, maxit, d_m, d_m2, d_t
                 )
             elif cv_type == 'rolling':
                 train_idx, val_idx = folds[fold_idx]
                 fold_mse = self._evaluate_fold_day(
-                    train_idx, val_idx, omega_m, omega_t, fpc_index, previous_BList,
-                    threshold, maxit, d_m, d_t
+                    train_idx, val_idx, omega_m, omega_m2, omega_t, fpc_index, previous_BList,
+                    threshold, maxit, d_m, d_m2, d_t
                 )
             else:  # cv_type == 'observation'
                 fold_mse = self._evaluate_fold_observation(
-                    folds, fold_idx, omega_m, omega_t, fpc_index, previous_BList,
-                    threshold, maxit, d_m, d_t
+                    folds, fold_idx, omega_m, omega_m2, omega_t, fpc_index, previous_BList,
+                    threshold, maxit, d_m, d_m2, d_t
                 )
                 
             if fold_mse is not None:
@@ -539,8 +557,8 @@ class FPCA_penalized:
                 
         return np.mean(val_mses) if val_mses else np.inf
 
-    def _evaluate_fold_day(self, train_idx, val_idx, omega_m, omega_t, fpc_index, previous_BList,
-                           threshold, maxit, d_m, d_t):
+    def _evaluate_fold_day(self, train_idx, val_idx, omega_m, omega_m2, omega_t, fpc_index, previous_BList,
+                           threshold, maxit, d_m, d_m2, d_t):
         """
         Fits the model on train days and evaluates on validation days.
         """
@@ -568,13 +586,13 @@ class FPCA_penalized:
             # We must set scoreMat of appropriate shape before fitting
             fpca_train.scoreMat = np.zeros((len(train_idx), 1))
             _, B_new = fpca_train.first_FPC_fit(
-                threshold=threshold, maxit=maxit, omega_m=omega_m, omega_t=omega_t, d_m=d_m, d_t=d_t
+                threshold=threshold, maxit=maxit, omega_m=omega_m, omega_m2=omega_m2, omega_t=omega_t, d_m=d_m, d_m2=d_m2, d_t=d_t
             )
         else:
             # Pre-populate scoreMat with dummy values (subsequent_FPC_fit will column_stack it anyway)
             fpca_train.scoreMat = np.zeros((len(train_idx), len(previous_BList)))
             _, B_new = fpca_train.subsequent_FPC_fit(
-                threshold=threshold, maxit=maxit, omega_m=omega_m, omega_t=omega_t, d_m=d_m, d_t=d_t
+                threshold=threshold, maxit=maxit, omega_m=omega_m, omega_m2=omega_m2, omega_t=omega_t, d_m=d_m, d_m2=d_m2, d_t=d_t
             )
             
         BList_val = previous_BList + [B_new]
@@ -592,8 +610,8 @@ class FPCA_penalized:
             
         return np.mean(val_mses) if val_mses else None
 
-    def _evaluate_fold_observation(self, fold_obs_splits, fold_idx, omega_m, omega_t, fpc_index, previous_BList,
-                                   threshold, maxit, d_m, d_t):
+    def _evaluate_fold_observation(self, fold_obs_splits, fold_idx, omega_m, omega_m2, omega_t, fpc_index, previous_BList,
+                                   threshold, maxit, d_m, d_m2, d_t):
         """
         Fits the model on train observations and evaluates on validation observations.
         """
@@ -644,12 +662,12 @@ class FPCA_penalized:
         if fpc_index == 0:
             fpca_train.scoreMat = np.zeros((n_days, 1))
             _, B_new = fpca_train.first_FPC_fit(
-                threshold=threshold, maxit=maxit, omega_m=omega_m, omega_t=omega_t, d_m=d_m, d_t=d_t
+                threshold=threshold, maxit=maxit, omega_m=omega_m, omega_m2=omega_m2, omega_t=omega_t, d_m=d_m, d_m2=d_m2, d_t=d_t
             )
         else:
             fpca_train.scoreMat = np.zeros((n_days, len(previous_BList)))
             _, B_new = fpca_train.subsequent_FPC_fit(
-                threshold=threshold, maxit=maxit, omega_m=omega_m, omega_t=omega_t, d_m=d_m, d_t=d_t
+                threshold=threshold, maxit=maxit, omega_m=omega_m, omega_m2=omega_m2, omega_t=omega_t, d_m=d_m, d_m2=d_m2, d_t=d_t
             )
             
         BList_val = previous_BList + [B_new]

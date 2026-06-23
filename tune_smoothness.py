@@ -18,12 +18,18 @@ def main():
     # CV Hyperparameters
     parser.add_argument("--omega_m_grid", type=float, nargs="+", default=[0.05, 0.1, 0.2, 0.3],
                         help="Grid of candidate values for omega_m (moneyness penalty).")
+    parser.add_argument("--omega_m2_grid", type=float, nargs="+", default=[0.0],
+                        help="Grid of candidate values for omega_m2 (second moneyness penalty).")
     parser.add_argument("--omega_t_grid", type=float, nargs="+", default=[0.05, 0.1, 0.2, 0.3],
                         help="Grid of candidate values for omega_t (tau/maturity penalty).")
     parser.add_argument("--n_splits", type=int, default=5,
                         help="Number of cross-validation splits/folds.")
-    parser.add_argument("--cv_type", type=str, choices=["day", "observation"], default="day",
-                        help="Cross-validation splitting strategy ('day' or 'observation').")
+    parser.add_argument("--train_window_size", type=int, default=None,
+                        help="Cross-validation size of training window.")
+    parser.add_argument("--test_window_size", type=int, default=None,
+                        help="Cross-validation size of validation window.")
+    parser.add_argument("--cv_type", type=str, choices=["rolling","day", "observation"], default="rolling",
+                        help="Cross-validation splitting strategy ('rolling', 'day' or 'observation').")
     
     # Component tuning arguments
     parser.add_argument("--fpc_index", type=int, default=0,
@@ -114,11 +120,13 @@ def main():
     # 4. Run Cross-Validation
     print(f"\nStarting Grid Search CV ({args.cv_type}-based split, {args.n_splits} splits):")
     print(f"  omega_m grid: {args.omega_m_grid}")
+    print(f"  omega_m2 grid: {args.omega_m2_grid}")
     print(f"  omega_t grid: {args.omega_t_grid}")
     print(f"  Tuning FPC index: {args.fpc_index}")
     
-    best_m, best_t, results = fpca.cross_validate_penalties(
+    best_m, best_m2, best_t, results = fpca.cross_validate_penalties(
         omega_m_grid=args.omega_m_grid,
+        omega_m2_grid=args.omega_m2_grid,
         omega_t_grid=args.omega_t_grid,
         n_splits=args.n_splits,
         cv_type=args.cv_type,
@@ -126,13 +134,16 @@ def main():
         previous_BList=previous_BList,
         threshold=args.threshold,
         maxit=args.maxit,
-        random_state=args.random_state
+        random_state=args.random_state,
+        train_window_size=args.train_window_size, 
+        test_window_size=args.test_window_size
     )
     
     print("\n" + "="*50)
     print("TUNING COMPLETED")
     print("="*50)
     print(f"Optimal omega_m (moneyness): {best_m}")
+    print(f"Optimal omega_m2 (second moneyness): {best_m2}")
     print(f"Optimal omega_t (tau/maturity): {best_t}")
     
     # 5. Save results
@@ -141,6 +152,7 @@ def main():
     
     best_params_data = {
         "best_omega_m": best_m,
+        "best_omega_m2": best_m2,
         "best_omega_t": best_t,
         "fpc_index": args.fpc_index,
         "cv_type": args.cv_type,
