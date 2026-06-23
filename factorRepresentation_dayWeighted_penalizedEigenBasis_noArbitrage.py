@@ -375,9 +375,10 @@ class FPCA_penalized:
         reg.fit(X, iv)
         return reg.coef_
 
-    def cross_validate_penalties(self, omega_m_grid, omega_t_grid, n_splits=5, cv_type='day', 
+    def cross_validate_penalties(self, omega_m_grid, omega_t_grid, n_splits=5, cv_type='rolling', 
                                  fpc_index=0, previous_BList=None, threshold=1e-4, maxit=10, 
-                                 d_m=2, d_t=2, random_state=None):
+                                 d_m=2, d_t=2, random_state=None,
+                                 train_window_size=None, test_window_size=None):
         """
         Runs grid search cross-validation to select optimal smoothness hyperparameters (omega_m, omega_t).
         
@@ -385,7 +386,7 @@ class FPCA_penalized:
         - omega_m_grid: list/array of candidate values for omega_m
         - omega_t_grid: list/array of candidate values for omega_t
         - n_splits: number of CV folds
-        - cv_type: 'day' (split days) or 'observation' (split observations within each day)
+        - cv_type: 'rolling' (rolling/expanding window time-series split), 'day' (random split days) or 'observation' (split observations within each day)
         - fpc_index: index of the FPC being fitted (0 for first, >0 for subsequent)
         - previous_BList: list of B matrices for already fitted FPCs (required if fpc_index > 0)
         - threshold: convergence threshold for FPC fitting
@@ -393,14 +394,16 @@ class FPCA_penalized:
         - d_m: order of difference penalty for moneyness
         - d_t: order of difference penalty for tau
         - random_state: random seed for reproducibility
+        - train_window_size: size of the rolling training window (int). If None, uses an expanding window (all past data).
+        - test_window_size: size of the future testing/validation window (int). If None, defaults to n_days // (n_splits + 1).
         
         Returns:
         - best_omega_m: float
         - best_omega_t: float
         - results: list of dicts containing details for each grid point
         """
-        if cv_type not in ['day', 'observation']:
-            raise ValueError("cv_type must be either 'day' or 'observation'")
+        if cv_type not in ['rolling', 'day', 'observation']:
+            raise ValueError("cv_type must be 'rolling', 'day', or 'observation'")
             
         if fpc_index > 0 and previous_BList is None:
             raise ValueError("previous_BList must be provided when fpc_index > 0")
@@ -408,7 +411,7 @@ class FPCA_penalized:
         if previous_BList is None:
             previous_BList = []
             
-        folds = self._split_folds(n_splits, cv_type, random_state)
+        folds = self._split_folds(n_splits, cv_type, random_state, train_window_size, test_window_size)
         
         best_mse = np.inf
         best_omega_m = None
@@ -438,11 +441,42 @@ class FPCA_penalized:
                     
         return best_omega_m, best_omega_t, results
 
-    def _split_folds(self, n_splits, cv_type, random_state):
+    def _split_folds(self, n_splits, cv_type, random_state, train_window_size=None, test_window_size=None):
         """
         Generates fold indices/splits for cross-validation.
         """
-        if cv_type == 'day':
+        if cv_type == 'rolling':
+            n_days = len(self.cleaned_data)
+            test_size = test_window_size if test_window_size is not None else n_days // (n_splits + 1)
+            test_size = max(1, test_size)
+            
+            folds = []
+            for k in range(n_splits):
+                val_start = n_days - (n_splits - k) * test_size
+                val_end = val_start + test_size
+                
+                if val_start <= 0:
+                    raise ValueError(
+                        f"Not enough days ({n_days}) for {n_splits} splits with test_window_size={test_size}. "
+                        f"At split index {k}, validation start index is {val_start} which is <= 0."
+                    )
+                
+                if train_window_size is None:
+                    train_start = 0
+                else:
+                    train_start = max(0, val_start - train_window_size)
+                    if train_start >= val_start:
+                        raise ValueError(
+                            f"Training window starts at or after validation start index at split {k} "
+                            f"(train_start={train_start}, val_start={val_start})."
+                        )
+                
+                train_idx = np.arange(train_start, val_start)
+                val_idx = np.arange(val_start, val_end)
+                folds.append((train_idx, val_idx))
+            return folds
+            
+        elif cv_type == 'day':
             indices = np.arange(len(self.cleaned_data))
             if random_state is not None:
                 rng = np.random.default_rng(random_state)
@@ -470,7 +504,11 @@ class FPCA_penalized:
         """
         Evaluates a single grid point (omega_m, omega_t) over all folds.
         """
-        n_splits = len(folds)
+        if cv_type in ['day', 'rolling']:
+            n_splits = len(folds)
+        else:
+            n_splits = len(folds[0]) if len(folds) > 0 else 0
+            
         val_mses = []
         
         for fold_idx in range(n_splits):
@@ -480,6 +518,12 @@ class FPCA_penalized:
                 train_idx = np.concatenate([folds[j] for j in range(n_splits) if j != fold_idx])
                 val_idx = folds[fold_idx]
                 
+                fold_mse = self._evaluate_fold_day(
+                    train_idx, val_idx, omega_m, omega_t, fpc_index, previous_BList,
+                    threshold, maxit, d_m, d_t
+                )
+            elif cv_type == 'rolling':
+                train_idx, val_idx = folds[fold_idx]
                 fold_mse = self._evaluate_fold_day(
                     train_idx, val_idx, omega_m, omega_t, fpc_index, previous_BList,
                     threshold, maxit, d_m, d_t
