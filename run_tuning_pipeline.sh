@@ -31,11 +31,11 @@ TRAIN_WINDOW_SIZE=500           # Training window size (empty ("") for expanding
 TEST_WINDOW_SIZE=100            # Validation window size (empty ("") for default)
 THETA_CAL=1.0                   # Calendar arbitrage penalty weight
 THETA_BUT=1.0                   # Butterfly arbitrage penalty weight
-FRICTION_TOL=1e-4               # Tolerance for arbitrage check
+FRICTION_TOL=0.001               # Tolerance for arbitrage check
 
 # Grid search spaces (space-separated lists)
-OMEGA_M_GRID="0.025 0.5 0.1 0.2"
-OMEGA_M2_GRID="0.0 0.01 0.025"
+OMEGA_M_GRID="0.025 0.05 0.1 0.2 .5"
+OMEGA_M2_GRID="0.0 0.01 0.025 .05 .1"
 OMEGA_T_GRID="0.005 0.01 0.025 0.05"
 
 # Spline basis specifications
