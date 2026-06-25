@@ -28,8 +28,6 @@ def main():
                         help="Cross-validation size of training window.")
     parser.add_argument("--test_window_size", type=int, default=None,
                         help="Cross-validation size of validation window.")
-    parser.add_argument("--cv_type", type=str, choices=["rolling","day", "observation"], default="rolling",
-                        help="Cross-validation splitting strategy ('rolling', 'day' or 'observation').")
     parser.add_argument("--theta_cal", type=float, default=0.0,
                         help="Weight of calendar spread arbitrage violation magnitude in CV score.")
     parser.add_argument("--theta_but", type=float, default=0.0,
@@ -58,8 +56,6 @@ def main():
                         help="Maximum number of iterations for the FPC fitting algorithm.")
     parser.add_argument("--threshold", type=float, default=1e-4,
                         help="Convergence threshold for the FPC fitting algorithm.")
-    parser.add_argument("--random_state", type=int, default=42,
-                        help="Random seed for fold splitting reproducibility.")
     
     # Output arguments
     parser.add_argument("--output_prefix", type=str, default="cv_tuning",
@@ -136,7 +132,7 @@ def main():
     )
     
     # 4. Run Cross-Validation
-    print(f"\nStarting Grid Search CV ({args.cv_type}-based split, {args.n_splits} splits):")
+    print(f"\nStarting Grid Search CV (rolling-based split, {args.n_splits} splits):")
     print(f"  omega_m grid: {args.omega_m_grid}")
     print(f"  omega_m2 grid: {args.omega_m2_grid}")
     print(f"  omega_t grid: {args.omega_t_grid}")
@@ -148,12 +144,10 @@ def main():
         omega_m2_grid=args.omega_m2_grid,
         omega_t_grid=args.omega_t_grid,
         n_splits=args.n_splits,
-        cv_type=args.cv_type,
         fpc_index=args.fpc_index,
         previous_BList=previous_BList,
         threshold=args.threshold,
         maxit=args.maxit,
-        random_state=args.random_state,
         train_window_size=args.train_window_size, 
         test_window_size=args.test_window_size,
         theta_cal=args.theta_cal,
@@ -177,7 +171,7 @@ def main():
         "best_omega_m2": best_m2,
         "best_omega_t": best_t,
         "fpc_index": args.fpc_index,
-        "cv_type": args.cv_type,
+        "cv_type": 'rolling',
         "n_splits": args.n_splits,
         "theta_cal": args.theta_cal,
         "theta_but": args.theta_but,

@@ -25,7 +25,6 @@ DATA_PATH="data/DJX_data/DJX_lists_traded.pkl"
 N_DAYS=""                       # Number of days to limit (empty to use all days)
 
 # Cross-Validation parameters
-CV_TYPE="rolling"
 N_SPLITS=5
 TRAIN_WINDOW_SIZE=500           # Training window size (empty ("") for expanding window)
 TEST_WINDOW_SIZE=100            # Validation window size (empty ("") for default)
@@ -49,8 +48,7 @@ ORDER_TAU=4
 # Fit/Optimization iterations
 MAXIT=30
 THRESHOLD=1e-4
-RANDOM_STATE=42
-OUTPUT_PREFIX="cv_tuning"
+OUTPUT_PREFIX="cv_tuning_sequential"
 
 # ------------------------------------------------------------------------------
 # BASH INITIALIZATION AND ARGUMENT ASSEMBLY
@@ -62,7 +60,7 @@ echo "Pipeline Configuration:"
 echo "  Python Bin: $PYTHON_BIN"
 echo "  Dataset: $DATA_PATH"
 echo "  n_days: ${N_DAYS:-All}"
-echo "  cv_type: $CV_TYPE, n_splits: $N_SPLITS"
+echo "  cv_type: rolling, n_splits: $N_SPLITS"
 echo "  Arbitrage Penalties: theta_cal=$THETA_CAL, theta_but=$THETA_BUT, friction_tol=$FRICTION_TOL"
 echo "  Moneyness grid: $OMEGA_M_GRID"
 echo "  Moneyness2 grid: $OMEGA_M2_GRID"
@@ -72,11 +70,9 @@ echo "--------------------------------------------------------"
 # Assemble tuning arguments array
 TUNE_ARGS=(
     "--data_path" "$DATA_PATH"
-    "--cv_type" "$CV_TYPE"
     "--n_splits" "$N_SPLITS"
     "--maxit" "$MAXIT"
     "--threshold" "$THRESHOLD"
-    "--random_state" "$RANDOM_STATE"
     "--theta_cal" "$THETA_CAL"
     "--theta_but" "$THETA_BUT"
     "--friction_tol" "$FRICTION_TOL"

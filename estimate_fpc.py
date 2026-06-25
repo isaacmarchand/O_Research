@@ -59,8 +59,6 @@ def main():
                         help="Grid of candidate values for omega_m2.")
     parser.add_argument("--omega_t_grid", type=float, nargs="+", default=[0.05, 0.1, 0.2, 0.3],
                         help="Grid of candidate values for omega_t.")
-    parser.add_argument("--cv_type", type=str, choices=["rolling", "day", "observation"], default="rolling",
-                        help="Cross-validation splitting strategy.")
     parser.add_argument("--n_splits", type=int, default=5,
                         help="Number of splits/folds for cross-validation.")
     parser.add_argument("--train_window_size", type=int, default=None,
@@ -73,8 +71,6 @@ def main():
                         help="Weight of butterfly spread arbitrage penalty in CV.")
     parser.add_argument("--friction_tol", type=float, default=1e-4,
                         help="Friction tolerance threshold for arbitrage check in CV.")
-    parser.add_argument("--random_state", type=int, default=42,
-                        help="Random seed for fold splits.")
 
     args = parser.parse_args()
     
@@ -165,7 +161,6 @@ def main():
             omega_m2_grid=args.omega_m2_grid,
             omega_t_grid=args.omega_t_grid,
             n_splits=args.n_splits,
-            cv_type=args.cv_type,
             fpc_index=args.fpc_index,
             previous_BList=previous_BList,
             threshold=args.threshold,
@@ -173,7 +168,6 @@ def main():
             d_m=args.d_m,
             d_m2=args.d_m2,
             d_t=args.d_t,
-            random_state=args.random_state,
             train_window_size=args.train_window_size,
             test_window_size=args.test_window_size,
             theta_cal=args.theta_cal,
