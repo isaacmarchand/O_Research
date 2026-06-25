@@ -30,6 +30,22 @@ def main():
                         help="Cross-validation size of validation window.")
     parser.add_argument("--cv_type", type=str, choices=["rolling","day", "observation"], default="rolling",
                         help="Cross-validation splitting strategy ('rolling', 'day' or 'observation').")
+    parser.add_argument("--theta_cal", type=float, default=0.0,
+                        help="Weight of calendar spread arbitrage violation magnitude in CV score.")
+    parser.add_argument("--theta_but", type=float, default=0.0,
+                        help="Weight of butterfly spread arbitrage violation magnitude in CV score.")
+    parser.add_argument("--friction_tol", type=float, default=1e-4,
+                        help="Tolerance threshold below which arbitrage violations are ignored.")
+    
+    # Spline basis specifications
+    parser.add_argument("--nb_spline_moneyness", type=int, default=30,
+                        help="Number of spline basis functions for moneyness.")
+    parser.add_argument("--nb_spline_tau", type=int, default=36,
+                        help="Number of spline basis functions for maturity (tau).")
+    parser.add_argument("--order_moneyness", type=int, default=4,
+                        help="Spline order for moneyness.")
+    parser.add_argument("--order_tau", type=int, default=4,
+                        help="Spline order for tau.")
     
     # Component tuning arguments
     parser.add_argument("--fpc_index", type=int, default=0,
@@ -110,8 +126,10 @@ def main():
     print("Initializing FPCA model instance...")
     fpca = FPCA_penalized(
         logMoneyness, tau, iv,
-        nb_spline_moneyness=30, nb_spline_tau=36,
-        order_moneyness=4, order_tau=4,
+        nb_spline_moneyness=args.nb_spline_moneyness,
+        nb_spline_tau=args.nb_spline_tau,
+        order_moneyness=args.order_moneyness,
+        order_tau=args.order_tau,
         S=S, r=rfRate, q=dividendRate,
         range_moneyness = [minLogMoney, maxLogMoney],
         range_tau = [minTau, maxTau]
@@ -123,6 +141,7 @@ def main():
     print(f"  omega_m2 grid: {args.omega_m2_grid}")
     print(f"  omega_t grid: {args.omega_t_grid}")
     print(f"  Tuning FPC index: {args.fpc_index}")
+    print(f"  Arbitrage Penalties: theta_cal={args.theta_cal}, theta_but={args.theta_but}, friction_tol={args.friction_tol}")
     
     best_m, best_m2, best_t, results = fpca.cross_validate_penalties(
         omega_m_grid=args.omega_m_grid,
@@ -136,7 +155,10 @@ def main():
         maxit=args.maxit,
         random_state=args.random_state,
         train_window_size=args.train_window_size, 
-        test_window_size=args.test_window_size
+        test_window_size=args.test_window_size,
+        theta_cal=args.theta_cal,
+        theta_but=args.theta_but,
+        friction_tol=args.friction_tol
     )
     
     print("\n" + "="*50)
@@ -156,7 +178,10 @@ def main():
         "best_omega_t": best_t,
         "fpc_index": args.fpc_index,
         "cv_type": args.cv_type,
-        "n_splits": args.n_splits
+        "n_splits": args.n_splits,
+        "theta_cal": args.theta_cal,
+        "theta_but": args.theta_but,
+        "friction_tol": args.friction_tol
     }
     
     print(f"\nSaving best parameters to: {best_params_file}")

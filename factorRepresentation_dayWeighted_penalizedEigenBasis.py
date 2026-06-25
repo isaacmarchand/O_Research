@@ -386,7 +386,8 @@ class FPCA_penalized:
     def cross_validate_penalties(self, omega_m_grid, omega_t_grid, omega_m2_grid=None, n_splits=5, cv_type='rolling', 
                                  fpc_index=0, previous_BList=None, threshold=1e-4, maxit=10, 
                                  d_m=2, d_m2=3, d_t=2, random_state=None,
-                                 train_window_size=None, test_window_size=None):
+                                 train_window_size=None, test_window_size=None,
+                                 theta_cal=0.0, theta_but=0.0, friction_tol=1e-4):
         """
         Runs grid search cross-validation to select optimal smoothness hyperparameters (omega_m, omega_m2, omega_t).
         
@@ -406,6 +407,9 @@ class FPCA_penalized:
         - random_state: random seed for reproducibility
         - train_window_size: size of the rolling training window (int). If None, uses an expanding window (all past data).
         - test_window_size: size of the future testing/validation window (int). If None, defaults to n_days // (n_splits + 1).
+        - theta_cal: weight of calendar spread arbitrage violation magnitude in CV score
+        - theta_but: weight of butterfly spread arbitrage violation magnitude in CV score
+        - friction_tol: tolerance threshold below which arbitrage violations are ignored (representing transaction costs)
         
         Returns:
         - best_omega_m: float
@@ -427,7 +431,7 @@ class FPCA_penalized:
             
         folds = self._split_folds(n_splits, cv_type, random_state, train_window_size, test_window_size)
         
-        best_mse = np.inf
+        best_score = np.inf
         best_omega_m = None
         best_omega_m2 = None
         best_omega_t = None
@@ -437,22 +441,26 @@ class FPCA_penalized:
             for omega_m2 in omega_m2_grid:
                 for omega_t in omega_t_grid:
                     # Run CV for this grid point
-                    mean_val_mse = self._evaluate_grid_point(
+                    mean_val_score, mean_val_mse, mean_cal_viol, mean_but_viol = self._evaluate_grid_point(
                         omega_m, omega_m2, omega_t, folds, cv_type, fpc_index, previous_BList,
-                        threshold, maxit, d_m, d_m2, d_t
+                        threshold, maxit, d_m, d_m2, d_t,
+                        theta_cal=theta_cal, theta_but=theta_but, friction_tol=friction_tol
                     )
                     
                     results.append({
                         'omega_m': omega_m,
                         'omega_m2': omega_m2,
                         'omega_t': omega_t,
-                        'mean_val_mse': mean_val_mse
+                        'mean_val_score': mean_val_score,
+                        'mean_val_mse': mean_val_mse,
+                        'mean_cal_viol': mean_cal_viol,
+                        'mean_but_viol': mean_but_viol
                     })
                     
-                    print(f"CV Grid: omega_m={omega_m:.4f}, omega_m2={omega_m2:.4f}, omega_t={omega_t:.4f} -> Mean Val MSE = {mean_val_mse:.8f}")
+                    print(f"CV Grid: omega_m={omega_m:.4f}, omega_m2={omega_m2:.4f}, omega_t={omega_t:.4f} -> Mean Val Score = {mean_val_score:.8f} (MSE={mean_val_mse:.8f}, CalViol={mean_cal_viol:.8f}, ButViol={mean_but_viol:.8f})")
                     
-                    if mean_val_mse < best_mse:
-                        best_mse = mean_val_mse
+                    if mean_val_score < best_score:
+                        best_score = mean_val_score
                         best_omega_m = omega_m
                         best_omega_m2 = omega_m2
                         best_omega_t = omega_t
@@ -518,7 +526,8 @@ class FPCA_penalized:
             return obs_folds_by_day
 
     def _evaluate_grid_point(self, omega_m, omega_m2, omega_t, folds, cv_type, fpc_index, previous_BList,
-                             threshold, maxit, d_m, d_m2, d_t):
+                             threshold, maxit, d_m, d_m2, d_t,
+                             theta_cal=0.0, theta_but=0.0, friction_tol=1e-4):
         """
         Evaluates a single grid point (omega_m, omega_m2, omega_t) over all folds.
         """
@@ -527,7 +536,12 @@ class FPCA_penalized:
         else:
             n_splits = len(folds[0]) if len(folds) > 0 else 0
             
+        print(n_splits)
+            
+        val_scores = []
         val_mses = []
+        val_cal_viols = []
+        val_but_viols = []
         
         for fold_idx in range(n_splits):
             if cv_type == 'day':
@@ -536,29 +550,39 @@ class FPCA_penalized:
                 train_idx = np.concatenate([folds[j] for j in range(n_splits) if j != fold_idx])
                 val_idx = folds[fold_idx]
                 
-                fold_mse = self._evaluate_fold_day(
+                fold_res = self._evaluate_fold_day(
                     train_idx, val_idx, omega_m, omega_m2, omega_t, fpc_index, previous_BList,
-                    threshold, maxit, d_m, d_m2, d_t
+                    threshold, maxit, d_m, d_m2, d_t,
+                    theta_cal=theta_cal, theta_but=theta_but, friction_tol=friction_tol
                 )
             elif cv_type == 'rolling':
                 train_idx, val_idx = folds[fold_idx]
-                fold_mse = self._evaluate_fold_day(
+                fold_res = self._evaluate_fold_day(
                     train_idx, val_idx, omega_m, omega_m2, omega_t, fpc_index, previous_BList,
-                    threshold, maxit, d_m, d_m2, d_t
+                    threshold, maxit, d_m, d_m2, d_t,
+                    theta_cal=theta_cal, theta_but=theta_but, friction_tol=friction_tol
                 )
             else:  # cv_type == 'observation'
-                fold_mse = self._evaluate_fold_observation(
+                fold_res = self._evaluate_fold_observation(
                     folds, fold_idx, omega_m, omega_m2, omega_t, fpc_index, previous_BList,
-                    threshold, maxit, d_m, d_m2, d_t
+                    threshold, maxit, d_m, d_m2, d_t,
+                    theta_cal=theta_cal, theta_but=theta_but, friction_tol=friction_tol
                 )
                 
-            if fold_mse is not None:
-                val_mses.append(fold_mse)
+            if fold_res is not None:
+                val_scores.append(fold_res['score'])
+                val_mses.append(fold_res['mse'])
+                val_cal_viols.append(fold_res['cal_viol'])
+                val_but_viols.append(fold_res['but_viol'])
                 
-        return np.mean(val_mses) if val_mses else np.inf
+        if not val_scores:
+            return np.inf, np.inf, np.inf, np.inf
+            
+        return np.mean(val_scores), np.mean(val_mses), np.mean(val_cal_viols), np.mean(val_but_viols)
 
     def _evaluate_fold_day(self, train_idx, val_idx, omega_m, omega_m2, omega_t, fpc_index, previous_BList,
-                           threshold, maxit, d_m, d_m2, d_t):
+                           threshold, maxit, d_m, d_m2, d_t,
+                           theta_cal=0.0, theta_but=0.0, friction_tol=1e-4):
         """
         Fits the model on train days and evaluates on validation days.
         """
@@ -597,8 +621,12 @@ class FPCA_penalized:
             
         BList_val = previous_BList + [B_new]
         
+        ###CHECK###Check under here if using fpca_train instead of self could simplify ################
         # Evaluate on validation days
+        val_fold_scores = []
         val_mses = []
+        val_cal_viols = []
+        val_but_viols = []
         for i in val_idx:
             m_val, tau_val, iv_val = self.cleaned_data[i]
             if len(iv_val) == 0:
@@ -606,12 +634,44 @@ class FPCA_penalized:
             coords_val = np.column_stack([m_val, tau_val])
             scores_val = self.project_to_scores(coords_val, iv_val, BList_val)
             y_hat_val = self.reconstruct_surface(coords_val, BList_val, scores_val)
-            val_mses.append(np.mean((iv_val - y_hat_val)**2))
+            mse_val = np.mean((iv_val - y_hat_val)**2)
             
-        return np.mean(val_mses) if val_mses else None
+            if theta_cal > 0.0 or theta_but > 0.0:
+                m_grid = np.linspace(self.range_moneyness[0], self.range_moneyness[1], 15) ###CHECK###could use more then 15 point for more precise abitrage calculations
+                tau_grid = np.linspace(max(1e-4, self.range_tau[0]), self.range_tau[1], 15)
+                
+                original_BList = self.BList
+                self.BList = BList_val
+                cal_mat, but_mat = self.compute_arbitrage_metrics(scores_val, m_grid=m_grid, tau_grid=tau_grid)
+                self.BList = original_BList
+                
+                cal_viol_mag = np.mean(np.maximum(0.0, -cal_mat - friction_tol)) ###CHECK### remove "friction", e.g. transaction cost, but maybe we should use friction as a treshhold and keep exact arbitrage value if treshhold is passed
+                but_viol_mag = np.mean(np.maximum(0.0, -but_mat - friction_tol))
+                
+                day_score = mse_val + theta_cal * cal_viol_mag + theta_but * but_viol_mag
+            else:
+                cal_viol_mag = 0.0
+                but_viol_mag = 0.0
+                day_score = mse_val
+                
+            val_fold_scores.append(day_score)
+            val_mses.append(mse_val)
+            val_cal_viols.append(cal_viol_mag)
+            val_but_viols.append(but_viol_mag)
+            
+        if not val_fold_scores:
+            return None
+            
+        return {
+            'score': np.mean(val_fold_scores),
+            'mse': np.mean(val_mses),
+            'cal_viol': np.mean(val_cal_viols),
+            'but_viol': np.mean(val_but_viols)
+        }
 
     def _evaluate_fold_observation(self, fold_obs_splits, fold_idx, omega_m, omega_m2, omega_t, fpc_index, previous_BList,
-                                   threshold, maxit, d_m, d_m2, d_t):
+                                   threshold, maxit, d_m, d_m2, d_t,
+                                   theta_cal=0.0, theta_but=0.0, friction_tol=1e-4):
         """
         Fits the model on train observations and evaluates on validation observations.
         """
@@ -673,7 +733,10 @@ class FPCA_penalized:
         BList_val = previous_BList + [B_new]
         
         # Evaluate on validation observations
+        val_fold_scores = []
         val_mses = []
+        val_cal_viols = []
+        val_but_viols = []
         for i in range(n_days):
             val_info = val_data[i]
             if val_info is None:
@@ -693,9 +756,40 @@ class FPCA_penalized:
             
             # Predict at validation coordinates using training scores
             y_hat_val = self.reconstruct_surface(coords_val, BList_val, scores_train_i)
-            val_mses.append(np.mean((iv_val - y_hat_val)**2))
+            mse_val = np.mean((iv_val - y_hat_val)**2)
             
-        return np.mean(val_mses) if val_mses else None
+            if theta_cal > 0.0 or theta_but > 0.0:
+                m_grid = np.linspace(self.range_moneyness[0], self.range_moneyness[1], 15)
+                tau_grid = np.linspace(max(1e-4, self.range_tau[0]), self.range_tau[1], 15)
+                
+                original_BList = self.BList
+                self.BList = BList_val
+                cal_mat, but_mat = self.compute_arbitrage_metrics(scores_train_i, m_grid=m_grid, tau_grid=tau_grid)
+                self.BList = original_BList
+                
+                cal_viol_mag = np.mean(np.maximum(0.0, -cal_mat - friction_tol))
+                but_viol_mag = np.mean(np.maximum(0.0, -but_mat - friction_tol))
+                
+                day_score = mse_val + theta_cal * cal_viol_mag + theta_but * but_viol_mag
+            else:
+                cal_viol_mag = 0.0
+                but_viol_mag = 0.0
+                day_score = mse_val
+                
+            val_fold_scores.append(day_score)
+            val_mses.append(mse_val)
+            val_cal_viols.append(cal_viol_mag)
+            val_but_viols.append(but_viol_mag)
+            
+        if not val_fold_scores:
+            return None
+            
+        return {
+            'score': np.mean(val_fold_scores),
+            'mse': np.mean(val_mses),
+            'cal_viol': np.mean(val_cal_viols),
+            'but_viol': np.mean(val_but_viols)
+        }
 
     def ivs_to_price_surface(self, coords, iv, day_index=0):
         """
@@ -1524,13 +1618,13 @@ if __name__ == '__main__':
     ivLog = [np.log(v) for v in iv]
     #%% Estimate the First few FPCs
     fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
-    alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=0.05, omega_t=0.05)
+    alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=0.05, omega_m2= 0.05, omega_t=0.005)
     fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
     
-    alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=.025, omega_t=.025)
+    alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.025, omega_m2= 0.0, omega_t=0.025)
     fpca.plot_eigen_functions(B2, num_points=50, figAngle=-70)
     
-    alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30, omega_m=.025, omega_t=.025)
+    alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.2, omega_m2= 0.1, omega_t=0.01)
     fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
     
     # alpha4, B4 = fpca.subsequent_FPC_fit(maxit=30)
@@ -1558,8 +1652,9 @@ if __name__ == '__main__':
         nbCalendar[i] = np.sum(calendar_metrics < 0)
         nbButterfly[i] = np.sum(butterfly_metrics < 0)
     
-    plt.plot(nbButterfly/(50*50))
-    plt.plot(nbCalendar/(50*50))  
+    plt.plot(nbButterfly/(50*50), label="But. arb.")
+    plt.plot(nbCalendar/(50*50), label="Cal. arb.")
+    plt.legend() 
     
     # Plot violations for the first day
     fpca.plot_arbitrage_violations(0)
