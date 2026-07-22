@@ -26,8 +26,8 @@ N_DAYS=""                       # Number of days to limit (empty to use all days
 
 # Cross-Validation parameters
 N_SPLITS=5
-TRAIN_WINDOW_SIZE=500           # Training window size (empty ("") for expanding window)
-TEST_WINDOW_SIZE=100            # Validation window size (empty ("") for default)
+TRAIN_WINDOW_SIZE=2000           # Training window size (empty ("") for expanding window)
+TEST_WINDOW_SIZE=30            # Validation window size (empty ("") for default)
 THETA_CAL=1.0                   # Calendar arbitrage penalty weight
 THETA_BUT=1.0                   # Butterfly arbitrage penalty weight
 FRICTION_TOL=0.001               # Tolerance for arbitrage check

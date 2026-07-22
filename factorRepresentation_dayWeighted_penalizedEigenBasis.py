@@ -1399,7 +1399,7 @@ class FPCA_penalized:
 #%%
 if __name__ == '__main__':
     #%% USING SPX DATA (dense data)
-    with open("/Users/macbook/Documents/O_Research/data/SPX_data/SPX_lists.pkl", "rb") as f:
+    with open("/Users/macbook/Documents/O_Research/data/SPX_data/SPX_lists_training.pkl", "rb") as f:
         uniqueDates = pickle.load(f)
         tau = pickle.load(f)
         moneyness = pickle.load(f)
@@ -1426,15 +1426,33 @@ if __name__ == '__main__':
     
     ivLog = [np.log(v) for v in iv]
     
+    with open("/Users/macbook/Documents/O_Research/data/SPX_data/SPX_lists_testing.pkl", "rb") as f:
+        uniqueDates_test = pickle.load(f)
+        tau_test = pickle.load(f)
+        moneyness_test = pickle.load(f)
+        iv_test = pickle.load(f)
+        S_test = pickle.load(f)
+        rfRate_test = pickle.load(f)
+        dividendRate_test = pickle.load(f)
+    
+    logMoneyness_test = [np.log(m) for m in moneyness_test]
+    sqrtTau_test = [np.sqrt(t) for t in tau_test]             #Should probably work with sqrt(tau\) if we use uniformly spaced knots in the B-spline
+    
+    flattenIV_test = [v for vDay in iv_test for v in vDay]
+    meanIV_test = np.mean(flattenIV)
+    ivCentered_test = [v-meanIV for v in iv_test]
+    
+    ivLog_test = [np.log(v) for v in iv_test]
+    
     #%% Estimate the First few FPCs
-    fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 10, nb_spline_tau = 12, order_moneyness = 4, order_tau = 4)
-    alpha1, B1 = fpca.first_FPC_fit(maxit=20)
+    fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
+    alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=0.05, omega_m2= 0.05, omega_t=0.01)
     fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
     
-    alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30)
+    alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.025, omega_m2= 0.0, omega_t=0.025)
     fpca.plot_eigen_functions(B2, num_points=50, figAngle=-70)
     
-    alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30)
+    alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.2, omega_m2= 0.1, omega_t=0.01)
     fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
     
     # alpha4, B4 = fpca.subsequent_FPC_fit(maxit=30)
@@ -1447,11 +1465,38 @@ if __name__ == '__main__':
         pickle.dump(fpca.BList, f)
     
     #%% Load Basis representation fit
-    fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 10, nb_spline_tau = 12, order_moneyness = 4, order_tau = 4)
-    with open("/Users/macbook/Documents/O_Research/data/SPX_data/FPCA_ApproxPenal_logM_tau_iv.pkl", "rb") as f:
+    fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
+    with open("/Users/macbook/Documents/O_Research/data/SPX_data/SPX_FPCA_ApproxPenal_logM_tau_iv.pkl", "rb") as f:
         fpca.scoreMat = pickle.load(f)
         fpca.BList = pickle.load(f)
         
+
+    #%% Testing Statistics
+    
+    val_mses_test = []
+    val_scores_test = []
+    
+    for i in range(len(uniqueDates_test)):
+        coords_val = np.column_stack([logMoneyness_test[i], tau_test[i]])
+        scores_val = fpca.project_to_scores(coords_val, iv_test[i], fpca.BList)
+        y_hat_val = fpca.reconstruct_surface(coords_val, fpca.BList, scores_val)
+        val_mses_test.append(np.mean((iv_test[i] - y_hat_val)**2))
+        val_scores_test.append(scores_val)
+        
+    #%% Training Data Statistics
+    
+    val_mses = []
+    val_scores = []
+    
+    for i in range(len(uniqueDates)):
+        coords_val = np.column_stack([logMoneyness[i], tau[i]])
+        scores_val = fpca.project_to_scores(coords_val, iv[i], fpca.BList)
+        y_hat_val = fpca.reconstruct_surface(coords_val, fpca.BList, scores_val)
+        val_mses.append(np.mean((iv[i] - y_hat_val)**2))
+        val_scores.append(scores_val)
+            
+           
+    
     #%% Measure Static Arbitrage
     nbDays = len(fpca.cleaned_data)
     nbCalendar = np.zeros(nbDays)
@@ -1462,17 +1507,19 @@ if __name__ == '__main__':
         nbCalendar[i] = np.sum(calendar_metrics < 0)
         nbButterfly[i] = np.sum(butterfly_metrics < 0)
     
-    plt.plot(nbButterfly)
-    plt.plot(nbCalendar)  
+    uniqueDates_dates = pd.to_datetime(uniqueDates)
+    plt.plot(uniqueDates_dates, nbButterfly/(50*50), label="But. arb.")
+    plt.plot(uniqueDates_dates, nbCalendar/(50*50), label="Cal. arb.")
+    plt.legend()  
     
     # Plot violations for the first day
-    fpca.plot_arbitrage_violations(0)
+    fpca.plot_arbitrage_violations(710)
         
         
     
     #%% USING DJX DATA (less dense data)
     ###################################################################################################
-    with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_lists.pkl", "rb") as f:
+    with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_lists_training.pkl", "rb") as f:
         uniqueDates = pickle.load(f)
         tau = pickle.load(f)
         moneyness = pickle.load(f)
@@ -1498,15 +1545,35 @@ if __name__ == '__main__':
     ivCentered = [v-meanIV for v in iv]
     
     ivLog = [np.log(v) for v in iv]
+    
+        
+    with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_lists_testing.pkl", "rb") as f:
+        uniqueDates_test = pickle.load(f)
+        tau_test = pickle.load(f)
+        moneyness_test = pickle.load(f)
+        iv_test = pickle.load(f)
+        S_test = pickle.load(f)
+        rfRate_test = pickle.load(f)
+        dividendRate_test = pickle.load(f)
+    
+    logMoneyness_test = [np.log(m) for m in moneyness_test]
+    sqrtTau_test = [np.sqrt(t) for t in tau_test]             #Should probably work with sqrt(tau\) if we use uniformly spaced knots in the B-spline
+    
+    flattenIV_test = [v for vDay in iv_test for v in vDay]
+    meanIV_test = np.mean(flattenIV)
+    ivCentered_test = [v-meanIV for v in iv_test]
+    
+    ivLog_test = [np.log(v) for v in iv_test]
+    
     #%% Estimate the First few FPCs
     fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
-    alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=0.05, omega_t=0.05)
+    alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=0.05, omega_m2= 0.05, omega_t=0.01)
     fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
     
-    alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=.025, omega_t=.025)
+    alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.025, omega_m2= 0.0, omega_t=0.025)
     fpca.plot_eigen_functions(B2, num_points=50, figAngle=-70)
     
-    alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30, omega_m=.025, omega_t=.025)
+    alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.2, omega_m2= 0.1, omega_t=0.01)
     fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
     
     # alpha4, B4 = fpca.subsequent_FPC_fit(maxit=30)
@@ -1524,6 +1591,18 @@ if __name__ == '__main__':
         fpca.scoreMat = pickle.load(f)
         fpca.BList = pickle.load(f)
         
+    #%% Testing Statistics
+    
+    val_mses = []
+    val_scores = []
+    
+    for i in range(len(uniqueDates_test)):
+        coords_val = np.column_stack([logMoneyness_test[i], tau_test[i]])
+        scores_val = fpca.project_to_scores(coords_val, iv_test[i], fpca.BList)
+        y_hat_val = fpca.reconstruct_surface(coords_val, fpca.BList, scores_val)
+        val_mses.append(np.mean((iv_test[i] - y_hat_val)**2))
+        val_scores.append(scores_val)
+            
     #%% Measure Static Arbitrage
     nbDays = len(fpca.cleaned_data)
     nbCalendar = np.zeros(nbDays)
@@ -1540,9 +1619,10 @@ if __name__ == '__main__':
     # Plot violations for the first day
     fpca.plot_arbitrage_violations(0)
     
+    
     #%% USING DJX DATA **TRADED** (sparse data)
     ###################################################################################################
-    with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_lists_traded.pkl", "rb") as f:
+    with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_lists_traded_training.pkl", "rb") as f:
         uniqueDates = pickle.load(f)
         tau = pickle.load(f)
         moneyness = pickle.load(f)
@@ -1568,9 +1648,27 @@ if __name__ == '__main__':
     ivCentered = [v-meanIV for v in iv]
     
     ivLog = [np.log(v) for v in iv]
+    
+    with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_lists_traded_testing.pkl", "rb") as f:
+        uniqueDates_test = pickle.load(f)
+        tau_test = pickle.load(f)
+        moneyness_test = pickle.load(f)
+        iv_test = pickle.load(f)
+        S_test = pickle.load(f)
+        rfRate_test = pickle.load(f)
+        dividendRate_test = pickle.load(f)
+    
+    logMoneyness_test = [np.log(m) for m in moneyness_test]
+    sqrtTau_test = [np.sqrt(t) for t in tau_test]             #Should probably work with sqrt(tau\) if we use uniformly spaced knots in the B-spline
+    
+    flattenIV_test = [v for vDay in iv_test for v in vDay]
+    meanIV_test = np.mean(flattenIV)
+    ivCentered_test = [v-meanIV for v in iv_test]
+    
+    ivLog_test = [np.log(v) for v in iv_test]
     #%% Estimate the First few FPCs
     fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
-    alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=0.05, omega_m2= 0.05, omega_t=0.005)
+    alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=0.05, omega_m2= 0.05, omega_t=0.01)
     fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
     
     alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.025, omega_m2= 0.0, omega_t=0.025)
@@ -1579,8 +1677,11 @@ if __name__ == '__main__':
     alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.2, omega_m2= 0.1, omega_t=0.01)
     fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
     
-    # alpha4, B4 = fpca.subsequent_FPC_fit(maxit=30)
+    # alpha4, B4 = fpca.subsequent_FPC_fit(maxit=40, omega_m=0.2, omega_m2= 0.1, omega_t=0.01)
     # fpca.plot_eigen_functions(B4, num_points=50, figAngle=-70)
+    
+    # alpha5, B5 = fpca.subsequent_FPC_fit(maxit=50, omega_m=0.2, omega_m2= 0.1, omega_t=0.01)
+    # fpca.plot_eigen_functions(B5, num_points=50, figAngle=-70)
     
     print(fpca.compute_explained_variance())
     
@@ -1594,6 +1695,32 @@ if __name__ == '__main__':
         fpca.scoreMat = pickle.load(f)
         fpca.BList = pickle.load(f)
         
+    #%% Testing Statistics
+    
+    val_mses_test = []
+    val_scores_test = []
+    
+    for i in range(len(uniqueDates_test)):
+        coords_val = np.column_stack([logMoneyness_test[i], tau_test[i]])
+        scores_val = fpca.project_to_scores(coords_val, iv_test[i], fpca.BList)
+        y_hat_val = fpca.reconstruct_surface(coords_val, fpca.BList, scores_val)
+        val_mses_test.append(np.mean((iv_test[i] - y_hat_val)**2))
+        val_scores_test.append(scores_val)
+        
+    #%% Training Data Statistics
+    
+    val_mses = []
+    val_scores = []
+    
+    for i in range(len(uniqueDates)):
+        coords_val = np.column_stack([logMoneyness[i], tau[i]])
+        scores_val = fpca.project_to_scores(coords_val, iv[i], fpca.BList)
+        y_hat_val = fpca.reconstruct_surface(coords_val, fpca.BList, scores_val)
+        val_mses.append(np.mean((iv[i] - y_hat_val)**2))
+        val_scores.append(scores_val)
+            
+        
+    
     #%% Measure Static Arbitrage
     nbDays = len(fpca.cleaned_data)
     nbCalendar = np.zeros(nbDays)
@@ -1604,8 +1731,9 @@ if __name__ == '__main__':
         nbCalendar[i] = np.sum(calendar_metrics < 0)
         nbButterfly[i] = np.sum(butterfly_metrics < 0)
     
-    plt.plot(nbButterfly/(50*50), label="But. arb.")
-    plt.plot(nbCalendar/(50*50), label="Cal. arb.")
+    uniqueDates_dates = pd.to_datetime(uniqueDates)
+    plt.plot(uniqueDates_dates, nbButterfly/(50*50), label="But. arb.")
+    plt.plot(uniqueDates_dates, nbCalendar/(50*50), label="Cal. arb.")
     plt.legend() 
     
     # Plot violations for the first day
