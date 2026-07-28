@@ -1483,6 +1483,7 @@ if __name__ == '__main__':
         val_mses_test.append(np.mean((iv_test[i] - y_hat_val)**2))
         val_scores_test.append(scores_val)
         
+    val_rmse_test = np.sqrt(val_mses_test)
     #%% Training Data Statistics
     
     val_mses = []
@@ -1494,8 +1495,8 @@ if __name__ == '__main__':
         y_hat_val = fpca.reconstruct_surface(coords_val, fpca.BList, scores_val)
         val_mses.append(np.mean((iv[i] - y_hat_val)**2))
         val_scores.append(scores_val)
-            
-           
+    
+    val_rmse = np.sqrt(val_mses) 
     
     #%% Measure Static Arbitrage
     nbDays = len(fpca.cleaned_data)
