@@ -181,10 +181,10 @@ class FPCA_penalized:
         
     def subsequent_FPC_fit(self, threshold = 1e-4, maxit = 10, omega_m = 1.0, omega_m2 = 0.0, omega_t = 1.0, d_m = 2, d_m2 = 3, d_t = 2):
         """
-        Estimate the subsequent FPC and their scores conditional on the FPC being ortogonL TO ll previous FPCs
+        Estimate the subsequent FPC and their scores conditional on the FPC being orthogonal to all previous FPCs
 
         Parameters:
-        - treshold: indicate what change in MSE do we consider as reaching convergence
+        - threshold: indicate what change in MSE do we consider as reaching convergence
         - maxit: maximum number of iterations
         - omega_m: penalty weight for the moneyness dimension
         - omega_m2: penalty weight for the second moneyness dimension penalty
@@ -194,8 +194,8 @@ class FPCA_penalized:
         - d_t: order of the difference penalty for tau
 
         Returns:
-        - scores: List of array of estimated scores for the first FPC
-        - BList: list of 2D array of dimension (nb_spline_moneyness X nb_spline_tau) specifying all the previously fitted FPCs
+        - scores: List of array of estimated scores for the current FPC
+        - B: 2D array of dimension (nb_spline_moneyness X nb_spline_tau) specifying the fitted FPC
         """
         
         B = self.B0
@@ -212,6 +212,18 @@ class FPCA_penalized:
         # Number of current FPC being fitted
         curr_fpc_idx = len(self.BList) + 1
         
+        # Pre-compute fixed residual surfaces from previously fitted FPCs and their fixed scores
+        cleaned_residuals = []
+        for i in range(len(self.cleaned_data)):
+            m_clean, tau_clean, iv_clean = self.cleaned_data[i]
+            if len(iv_clean) == 0:
+                cleaned_residuals.append(np.array([]))
+            else:
+                prev_fit = np.zeros(len(iv_clean))
+                for k in range(len(self.BList)):
+                    prev_fit += self.scoreMat[i, k] * self.evaluator(self.BList[k], np.column_stack([m_clean, tau_clean]))
+                cleaned_residuals.append(iv_clean - prev_fit)
+
         # Add a column for the new FPC scores
         self.scoreMat = np.column_stack((self.scoreMat, np.zeros((len(self.cleaned_data), 1))))
         
@@ -232,27 +244,23 @@ class FPCA_penalized:
             mse_list = []  
             for i in range(len(self.cleaned_data)):
                 m_clean, tau_clean, iv_clean = self.cleaned_data[i]
+                resid_i = cleaned_residuals[i]
                 
                 if len(iv_clean) == 0:
-                    self.scoreMat[i, :] = 0.0
+                    self.scoreMat[i, -1] = 0.0
                     continue
 
-                # Build the design matrix X (features)
-                # Columns are evaluations of all FPCs (previous + current) at the points
-                X = np.zeros((len(iv_clean), curr_fpc_idx))
-                for k in range(len(self.BList)):
-                    X[:, k] = self.evaluator(self.BList[k], np.column_stack([m_clean, tau_clean]))
-
                 # Evaluate current FPC candidate on the discrete (moneyness, tau) points
-                X[:, -1] = self.evaluator(B, np.column_stack([m_clean, tau_clean]))
+                psi_k = self.evaluator(B, np.column_stack([m_clean, tau_clean]))
+                X = psi_k.reshape(-1, 1)
 
-                # Fit the linear regression model for all scores alpha_i
+                # Fit univariate linear regression model for ONLY the current FPC score
                 reg = LinearRegression(fit_intercept=False)
-                reg.fit(X, iv_clean)
+                reg.fit(X, resid_i)
 
-                alpha_i = reg.coef_
-                self.scoreMat[i, :] = alpha_i
-                mse_list.append(np.mean((iv_clean - reg.predict(X))**2))
+                alpha_k_i = reg.coef_[0]
+                self.scoreMat[i, -1] = alpha_k_i
+                mse_list.append(np.mean((resid_i - reg.predict(X))**2))
             
             avg_mse = np.mean(mse_list)
             print(f'FPC {curr_fpc_idx}, Iteration {j+1} : MSE change = {(avg_mse - old_mse) / old_mse}, Max B Change = {maxBChange}')
@@ -271,6 +279,7 @@ class FPCA_penalized:
             
             for i in range(len(self.cleaned_data)):
                 m_clean, tau_clean, iv_clean = self.cleaned_data[i]
+                resid_i = cleaned_residuals[i]
                 if len(iv_clean) == 0: continue
                 
                 # Create weights such that every day has a standardized weight in the regression no matter the number of observations of the IVS on that day
@@ -286,15 +295,7 @@ class FPCA_penalized:
                 # Note2: Here X_i is only the b-vectors (splines) evaluated at each tau-moneyness coords. for day i
                 X_i = np.einsum('ja,jb->jab', D_m, D_t).reshape(len(iv_clean), -1)
                 
-                alpha_i = self.scoreMat[i, :]
-                curr_alpha = alpha_i[-1]
-                
-                # Residuals: iv_clean - sum_{m < J} alpha_{im} * psi_m
-                prev_fit = np.zeros(len(iv_clean))
-                for k in range(len(self.BList)):
-                    prev_fit += alpha_i[k] * self.evaluator(self.BList[k], np.column_stack([m_clean, tau_clean]))
-                
-                resid_i = iv_clean - prev_fit
+                curr_alpha = self.scoreMat[i, -1]
                 
                 # Note: The alpha here is multiplied as a scalar since for a given day the same alpha is applied to every obs of the surface
                 sum_XWX += W_i * (curr_alpha**2) * (X_i.T @ X_i)
@@ -565,8 +566,13 @@ class FPCA_penalized:
                 threshold=threshold, maxit=maxit, omega_m=omega_m, omega_m2=omega_m2, omega_t=omega_t, d_m=d_m, d_m2=d_m2, d_t=d_t
             )
         else:
-            # Pre-populate scoreMat with dummy values (subsequent_FPC_fit will column_stack it anyway)
+            # Populate scoreMat for previous FPCs on training days
             fpca_train.scoreMat = np.zeros((len(train_idx), len(previous_BList)))
+            for local_i, global_i in enumerate(train_idx):
+                m_clean, tau_clean, iv_clean = self.cleaned_data[global_i]
+                if len(iv_clean) > 0:
+                    coords = np.column_stack([m_clean, tau_clean])
+                    fpca_train.scoreMat[local_i, :] = fpca_train.project_to_scores(coords, iv_clean, previous_BList)
             _, B_new = fpca_train.subsequent_FPC_fit(
                 threshold=threshold, maxit=maxit, omega_m=omega_m, omega_m2=omega_m2, omega_t=omega_t, d_m=d_m, d_m2=d_m2, d_t=d_t
             )
@@ -677,7 +683,13 @@ class FPCA_penalized:
                 threshold=threshold, maxit=maxit, omega_m=omega_m, omega_m2=omega_m2, omega_t=omega_t, d_m=d_m, d_m2=d_m2, d_t=d_t
             )
         else:
+            # Populate scoreMat for previous FPCs on training observations
             fpca_train.scoreMat = np.zeros((n_days, len(previous_BList)))
+            for i in range(n_days):
+                m_clean, tau_clean, iv_clean = train_cleaned_data[i]
+                if len(iv_clean) > 0:
+                    coords = np.column_stack([m_clean, tau_clean])
+                    fpca_train.scoreMat[i, :] = fpca_train.project_to_scores(coords, iv_clean, previous_BList)
             _, B_new = fpca_train.subsequent_FPC_fit(
                 threshold=threshold, maxit=maxit, omega_m=omega_m, omega_m2=omega_m2, omega_t=omega_t, d_m=d_m, d_m2=d_m2, d_t=d_t
             )
@@ -1708,6 +1720,7 @@ if __name__ == '__main__':
         val_mses_test.append(np.mean((iv_test[i] - y_hat_val)**2))
         val_scores_test.append(scores_val)
         
+    print(np.mean(np.sqrt(val_mses_test)))
     #%% Training Data Statistics
     
     val_mses = []
@@ -1720,7 +1733,7 @@ if __name__ == '__main__':
         val_mses.append(np.mean((iv[i] - y_hat_val)**2))
         val_scores.append(scores_val)
             
-        
+    print(np.mean(np.sqrt(val_mses)))
     
     #%% Measure Static Arbitrage
     nbDays = len(fpca.cleaned_data)
