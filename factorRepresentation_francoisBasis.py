@@ -105,9 +105,9 @@ class SurfaceProjector:
         self.basis_functions = [
             lambda m, tau: np.ones_like(m),                                  # Basis 1: Long term ATM level
             lambda m, tau: np.exp(-np.sqrt(tau/self.T_conv)),                # Basis 2: Time to maturity slope
-            lambda m, tau: m*(m<=0)+(np.exp(2*m)-1)/(np.exp(2*m)+1)*(m>0),   # Basis 3: Moneyness slope
-            lambda m, tau: (1-np.exp(-(m**2)))*np.log(self.T_max/tau),       # Basis 4: Smile attenuation
-            lambda m, tau: (1-np.exp((3*m)**3))*np.log(tau/self.T_max)*(m<0) # Basis 5: Smirk
+            lambda m, tau: m * (m <= 0) + (np.exp(2 * m) - 1) / (np.exp(2 * m) + 1)*(m > 0),   # Basis 3: Moneyness slope
+            lambda m, tau: (1 - np.exp(-(m**2))) * np.log(self.T_max / tau),       # Basis 4: Smile attenuation
+            lambda m, tau: (1 - np.exp((3 * m)**3)) * np.log(tau / self.T_max) * (m < 0) # Basis 5: Smirk
         ]
         
     def project(self, moneyness, tau, iv, showFig = False):
@@ -707,7 +707,7 @@ class SurfaceProjector:
 #%%
 if __name__ == '__main__':
     #%% Load SPX Data formated
-    with open("/Users/macbook/Documents/O_Research/data/SPX_data/SPX_lists.pkl", "rb") as f:
+    with open("/Users/macbook/Documents/O_Research/data/SPX_data/SPX_lists_traded.pkl", "rb") as f:
         uniqueDates = pickle.load(f)
         tau = pickle.load(f)
         moneyness = pickle.load(f)
@@ -717,14 +717,16 @@ if __name__ == '__main__':
         dividendRate = pickle.load(f)
         
         
+    forwardMoneynessFrancois = [(1/np.sqrt(t))*np.log((1/m)*np.exp((r-q)*t)) for m, t, r, q in zip(moneyness, tau, rfRate, dividendRate)]
+
     #%% Compute K-L expansion of residuals (~40min) 
     projector = SurfaceProjector()
-    coefficients = projector.project(moneyness, tau, iv, showFig = False)
-    variance_explained, totVarExplained = projector.compute_variance_explained(moneyness, tau, iv, coefficients)
+    coefficients = projector.project(forwardMoneynessFrancois, tau, iv, showFig = False)
+    variance_explained, totVarExplained = projector.compute_variance_explained(forwardMoneynessFrancois, tau, iv, coefficients)
     print(f"Average variance explained: {np.mean(variance_explained):.2%}")
     plt.hist(variance_explained, 30)
-    residuals = projector.compute_residuals(moneyness, tau, iv, coefficients, scatterPlot=False)
-    scoresData = projector.compute_scores(moneyness, tau, residuals)
+    residuals = projector.compute_residuals(forwardMoneynessFrancois, tau, iv, coefficients, scatterPlot=False)
+    scoresData = projector.compute_scores(forwardMoneynessFrancois, tau, residuals)
     with open("/Users/macbook/Documents/O_Research/data/SPX_data/fdaOfResiduals_SPX.pkl", "wb") as f:
         pickle.dump(scoresData, f)
         pickle.dump(projector.fpca, f)
@@ -734,22 +736,22 @@ if __name__ == '__main__':
     #%% Look at specific surfaces
     
     projector = SurfaceProjector()
-    coefficients = projector.project(moneyness, tau, iv, showFig = False)
-    variance_explained, totVarExplained = projector.compute_variance_explained(moneyness, tau, iv, coefficients)
+    coefficients = projector.project(forwardMoneynessFrancois, tau, iv, showFig = False)
+    variance_explained, totVarExplained = projector.compute_variance_explained(forwardMoneynessFrancois, tau, iv, coefficients)
     print(f"Average variance explained: {np.mean(variance_explained):.2%}")
     _=plt.hist(variance_explained, 30)
-    residuals = projector.compute_residuals(moneyness, tau, iv, coefficients, scatterPlot=False)
+    residuals = projector.compute_residuals(forwardMoneynessFrancois, tau, iv, coefficients, scatterPlot=False)
     with open("/Users/macbook/Documents/O_Research/data/SPX_data/fdaOfResiduals_SPX.pkl", "rb") as f:
         scoresData = pickle.load(f)
         projector.fpca = pickle.load(f)
      
-    varianceRecon_explained, totVarReconExplained = projector.compute_full_variance_explained(moneyness, tau, iv, coefficients, scoresData)
+    varianceRecon_explained, totVarReconExplained = projector.compute_full_variance_explained(forwardMoneynessFrancois, tau, iv, coefficients, scoresData)
     print(f"Average variance explained: {np.mean(varianceRecon_explained):.2%}")
     _=plt.hist(varianceRecon_explained, 30)
     
     dateOfInterest = ['2006-05-08', '2008-12-01', '2019-12-31']
     idOfInterest = np.where(np.isin(uniqueDates, dateOfInterest))[0]
-    moneyInterest = [moneyness[i] for i in idOfInterest]
+    moneyInterest = [forwardMoneynessFrancois[i] for i in idOfInterest]
     tauInterest = [tau[i] for i in idOfInterest]
     ivInterest = [iv[i] for i in idOfInterest]
     
@@ -760,17 +762,17 @@ if __name__ == '__main__':
     
     #%% Show surfaces that have low explanation of their variance from functional representation
     projectorSpecific = SurfaceProjector()
-    coefficients = projectorSpecific.project(moneyness, tau, iv, showFig = False)
-    variance_explained, totVarExplained = projectorSpecific.compute_variance_explained(moneyness, tau, iv, coefficients)
-    residuals = projectorSpecific.compute_residuals(moneyness, tau, iv, coefficients, scatterPlot=False)
+    coefficients = projectorSpecific.project(forwardMoneynessFrancois, tau, iv, showFig = False)
+    variance_explained, totVarExplained = projectorSpecific.compute_variance_explained(forwardMoneynessFrancois, tau, iv, coefficients)
+    residuals = projectorSpecific.compute_residuals(forwardMoneynessFrancois, tau, iv, coefficients, scatterPlot=False)
     with open("/Users/macbook/Documents/O_Research/data/SPX_data/fdaOfResiduals_SPX.pkl", "rb") as f:
         scoresData = pickle.load(f)
         projectorSpecific.fpca = pickle.load(f)
         
-    varianceRecon_explained, totVarReconExplained = projector.compute_full_variance_explained(moneyness, tau, iv, coefficients, scoresData)
+    varianceRecon_explained, totVarReconExplained = projector.compute_full_variance_explained(forwardMoneynessFrancois, tau, iv, coefficients, scoresData)
         
     badVarianceID = np.where(np.array(variance_explained)<.65)[0]
-    moneyBadVar = [moneyness[i] for i in badVarianceID]
+    moneyBadVar = [forwardMoneynessFrancois[i] for i in badVarianceID]
     tauBadVar = [tau[i] for i in badVarianceID]
     ivBadVar = [iv[i] for i in badVarianceID]
     uniqueDatesBadVar = [uniqueDates[i] for i in badVarianceID]
@@ -786,7 +788,7 @@ if __name__ == '__main__':
     projectorSpecific = SurfaceProjector()
     dateOfInterest = ['2006-05-08', '2008-12-01', '2019-12-31']
     idOfInterest = np.where(np.isin(uniqueDates, dateOfInterest))[0]
-    moneyInterest = [moneyness[i] for i in idOfInterest]
+    moneyInterest = [forwardMoneynessFrancois[i] for i in idOfInterest]
     tauInterest = [tau[i] for i in idOfInterest]
     ivInterest = [iv[i] for i in idOfInterest]
     
@@ -828,12 +830,12 @@ if __name__ == '__main__':
     #%% compute arbitrage (not working for now)
     
     projector = SurfaceProjector()
-    coefficients = projector.project(moneyness, tau, iv, showFig = False)
+    coefficients = projector.project(forwardMoneynessFrancois, tau, iv, showFig = False)
     with open("/Users/macbook/Documents/O_Research/data/SPX_data/fdaOfResiduals_SPX.pkl", "rb") as f:
         scoresData = pickle.load(f)
         projector.fpca = pickle.load(f)
      
-    varianceRecon_explained, totVarReconExplained = projector.compute_full_variance_explained(moneyness, tau, iv, coefficients, scoresData)
+    varianceRecon_explained, totVarReconExplained = projector.compute_full_variance_explained(forwardMoneynessFrancois, tau, iv, coefficients, scoresData)
     print(f"Average variance explained: {np.mean(varianceRecon_explained):.2%}")
     
     m_mesh, tau_mesh, iv_mesh = projector.reconstruct_surface(coefficients, scoresData)
@@ -855,13 +857,13 @@ if __name__ == '__main__':
     
     # dateOfInterest = ['2006-05-08', '2008-12-01', '2019-12-31']
     # idOfInterest = np.where(np.isin(uniqueDates, dateOfInterest))[0]
-    # moneyInterest = [moneyness[i] for i in idOfInterest]
+    # moneyInterest = [forwardMoneynessFrancois[i] for i in idOfInterest]
     # tauInterest = [tau[i] for i in idOfInterest]
     # ivInterest = [iv[i] for i in idOfInterest]
     # _=projector.grid_etrapolation(moneyInterest, tauInterest, ivInterest, m_bounds=np.exp((-.15, .1)), tau_bounds=(1/365, 1), plotFig=True)
     
     
-    scoresData = projector.compute_scores(moneyness, tau, iv)
+    scoresData = projector.compute_scores(forwardMoneynessFrancois, tau, iv)
     with open("/Users/macbook/Documents/O_Research/data/SPX_data/fdaOfIVS_SPX.pkl", "wb") as f:
         pickle.dump(scoresData, f)
         pickle.dump(projector.fpca, f)

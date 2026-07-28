@@ -125,7 +125,7 @@ class FPCA_penalized:
                 mse_list.append(np.mean((iv_clean - reg.predict(X))**2))
             
             avg_mse = np.mean(mse_list)
-            print(f'FPC 1, Iteration {j+1} : MSE change = {np.abs(avg_mse - old_mse) / old_mse}, Max B Change = {maxBChange}')
+            print(f'FPC 1, Iteration {j+1} : MSE change = {(avg_mse - old_mse) / old_mse}, Max B Change = {maxBChange}')
             if np.abs(avg_mse - old_mse) / old_mse < threshold:
                 break
             
@@ -255,7 +255,7 @@ class FPCA_penalized:
                 mse_list.append(np.mean((iv_clean - reg.predict(X))**2))
             
             avg_mse = np.mean(mse_list)
-            print(f'FPC {curr_fpc_idx}, Iteration {j+1} : MSE change = {np.abs(avg_mse - old_mse) / old_mse}, Max B Change = {maxBChange}')
+            print(f'FPC {curr_fpc_idx}, Iteration {j+1} : MSE change = {(avg_mse - old_mse) / old_mse}, Max B Change = {maxBChange}')
             if np.abs(avg_mse - old_mse) / old_mse < threshold:
                 break
             
