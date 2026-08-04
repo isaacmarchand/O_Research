@@ -724,7 +724,7 @@ class FPCA:
 #%%
 if __name__ == '__main__':
     
-    with open("/Users/macbook/Documents/O_Research/data/SPX_data/SPX_lists.pkl", "rb") as f:
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/SPX_lists.pkl", "rb") as f:
         uniqueDates = pickle.load(f)
         tau = pickle.load(f)
         moneyness = pickle.load(f)
@@ -767,13 +767,13 @@ if __name__ == '__main__':
     
     fpca.compute_explained_variance()
 
-    with open("/Users/macbook/Documents/O_Research/data/SPX_data/FPCA_Approx_logM_tau_iv.pkl", "wb") as f:
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/FPCA_Approx_logM_tau_iv.pkl", "wb") as f:
         pickle.dump(fpca.scoreMat, f)
         pickle.dump(fpca.betaList, f)
 
     #%% Load Basis representation fit
     fpca = FPCA(logMoneyness, tau, iv, nb_spline_moneyness = 10, nb_spline_tau = 12, order_moneyness = 4, order_tau = 4)
-    with open("/Users/macbook/Documents/O_Research/data/SPX_data/FPCA_Approx_logM_tau_iv.pkl", "rb") as f:
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/FPCA_Approx_logM_tau_iv.pkl", "rb") as f:
         fpca.scoreMat = pickle.load(f)
         fpca.betaList = pickle.load(f)
         

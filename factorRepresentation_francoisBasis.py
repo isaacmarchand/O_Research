@@ -707,7 +707,7 @@ class SurfaceProjector:
 #%%
 if __name__ == '__main__':
     #%% Load SPX Data formated
-    with open("/Users/macbook/Documents/O_Research/data/SPX_data/SPX_lists_traded.pkl", "rb") as f:
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/SPX_lists_traded.pkl", "rb") as f:
         uniqueDates = pickle.load(f)
         tau = pickle.load(f)
         moneyness = pickle.load(f)
@@ -727,7 +727,7 @@ if __name__ == '__main__':
     plt.hist(variance_explained, 30)
     residuals = projector.compute_residuals(forwardMoneynessFrancois, tau, iv, coefficients, scatterPlot=False)
     scoresData = projector.compute_scores(forwardMoneynessFrancois, tau, residuals)
-    with open("/Users/macbook/Documents/O_Research/data/SPX_data/fdaOfResiduals_SPX.pkl", "wb") as f:
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/fdaOfResiduals_SPX.pkl", "wb") as f:
         pickle.dump(scoresData, f)
         pickle.dump(projector.fpca, f)
      
@@ -741,7 +741,7 @@ if __name__ == '__main__':
     print(f"Average variance explained: {np.mean(variance_explained):.2%}")
     _=plt.hist(variance_explained, 30)
     residuals = projector.compute_residuals(forwardMoneynessFrancois, tau, iv, coefficients, scatterPlot=False)
-    with open("/Users/macbook/Documents/O_Research/data/SPX_data/fdaOfResiduals_SPX.pkl", "rb") as f:
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/fdaOfResiduals_SPX.pkl", "rb") as f:
         scoresData = pickle.load(f)
         projector.fpca = pickle.load(f)
      
@@ -765,7 +765,7 @@ if __name__ == '__main__':
     coefficients = projectorSpecific.project(forwardMoneynessFrancois, tau, iv, showFig = False)
     variance_explained, totVarExplained = projectorSpecific.compute_variance_explained(forwardMoneynessFrancois, tau, iv, coefficients)
     residuals = projectorSpecific.compute_residuals(forwardMoneynessFrancois, tau, iv, coefficients, scatterPlot=False)
-    with open("/Users/macbook/Documents/O_Research/data/SPX_data/fdaOfResiduals_SPX.pkl", "rb") as f:
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/fdaOfResiduals_SPX.pkl", "rb") as f:
         scoresData = pickle.load(f)
         projectorSpecific.fpca = pickle.load(f)
         
@@ -831,7 +831,7 @@ if __name__ == '__main__':
     
     projector = SurfaceProjector()
     coefficients = projector.project(forwardMoneynessFrancois, tau, iv, showFig = False)
-    with open("/Users/macbook/Documents/O_Research/data/SPX_data/fdaOfResiduals_SPX.pkl", "rb") as f:
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/fdaOfResiduals_SPX.pkl", "rb") as f:
         scoresData = pickle.load(f)
         projector.fpca = pickle.load(f)
      
@@ -864,13 +864,13 @@ if __name__ == '__main__':
     
     
     scoresData = projector.compute_scores(forwardMoneynessFrancois, tau, iv)
-    with open("/Users/macbook/Documents/O_Research/data/SPX_data/fdaOfIVS_SPX.pkl", "wb") as f:
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/fdaOfIVS_SPX.pkl", "wb") as f:
         pickle.dump(scoresData, f)
         pickle.dump(projector.fpca, f)
     
     #%% show time series of first 5 scores from K-L expansion
     projector = SurfaceProjector()
-    with open("/Users/macbook/Documents/O_Research/data/SPX_data/fdaOfIVS_SPX.pkl", "rb") as f:
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/fdaOfIVS_SPX.pkl", "rb") as f:
         scoresData = pickle.load(f)
         projector.fpca = pickle.load(f)
     uniqueDatesPD = pd.to_datetime(uniqueDates)

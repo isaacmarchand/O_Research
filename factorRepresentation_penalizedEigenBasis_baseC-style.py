@@ -748,7 +748,7 @@ class FPCA_penalized:
         plt.show()
 
 #%% USING SPX DATA (dense data)
-with open("/Users/macbook/Documents/O_Research/data/SPX_data/SPX_lists.pkl", "rb") as f:
+with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/SPX_lists.pkl", "rb") as f:
     uniqueDates = pickle.load(f)
     tau = pickle.load(f)
     moneyness = pickle.load(f)
@@ -791,13 +791,13 @@ fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
 
 print(fpca.compute_explained_variance())
 
-with open("/Users/macbook/Documents/O_Research/data/SPX_data/SPX_FPCA_ApproxPenal_logM_tau_iv.pkl", "wb") as f:
+with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/SPX_FPCA_ApproxPenal_logM_tau_iv.pkl", "wb") as f:
     pickle.dump(fpca.scoreMat, f)
     pickle.dump(fpca.BList, f)
 
 #%% Load Basis representation fit
 fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 10, nb_spline_tau = 12, order_moneyness = 4, order_tau = 4)
-with open("/Users/macbook/Documents/O_Research/data/SPX_data/FPCA_ApproxPenal_logM_tau_iv.pkl", "rb") as f:
+with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/FPCA_ApproxPenal_logM_tau_iv.pkl", "rb") as f:
     fpca.scoreMat = pickle.load(f)
     fpca.BList = pickle.load(f)
     
@@ -821,7 +821,7 @@ fpca.plot_arbitrage_violations(0)
 
 #%% USING DJX DATA (dense data)
 ###################################################################################################
-with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_lists.pkl", "rb") as f:
+with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_lists.pkl", "rb") as f:
     uniqueDates = pickle.load(f)
     tau = pickle.load(f)
     moneyness = pickle.load(f)
@@ -863,13 +863,13 @@ fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
 
 print(fpca.compute_explained_variance())
 
-with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_FPCA_ApproxPenal_logM_tau_iv.pkl", "wb") as f:
+with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_FPCA_ApproxPenal_logM_tau_iv.pkl", "wb") as f:
     pickle.dump(fpca.scoreMat, f)
     pickle.dump(fpca.BList, f)
 
 #%% Load Basis representation fit
 fpca = FPCA_penalized(logMoneyness, tau, iv, nb_spline_moneyness = 20, nb_spline_tau = 24, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
-with open("/Users/macbook/Documents/O_Research/data/DJX_data/DJX_FPCA_ApproxPenal_logM_tau_iv.pkl", "rb") as f:
+with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_FPCA_ApproxPenal_logM_tau_iv.pkl", "rb") as f:
     fpca.scoreMat = pickle.load(f)
     fpca.BList = pickle.load(f)
     
