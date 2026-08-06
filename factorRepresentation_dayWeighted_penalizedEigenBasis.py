@@ -1495,6 +1495,7 @@ if __name__ == '__main__':
         val_scores_test.append(scores_val)
         
     val_rmse_test = np.sqrt(val_mses_test)
+    print(np.mean(val_rmse_test))
     #%% Training Data Statistics
     
     val_mses = []
@@ -1508,6 +1509,7 @@ if __name__ == '__main__':
         val_scores.append(scores_val)
     
     val_rmse = np.sqrt(val_mses) 
+    print(np.mean(val_rmse))
     
     #%% Measure Static Arbitrage
     nbDays = len(fpca.cleaned_data)
