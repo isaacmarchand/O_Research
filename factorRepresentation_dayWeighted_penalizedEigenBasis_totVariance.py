@@ -11,27 +11,27 @@ import pickle as pickle
 
 #%%
 
-class FPCA_penalized_implVar:
-    def __init__(self, moneyness, tau, implVar, nb_spline_moneyness = 10, nb_spline_tau = 10, order_moneyness = 4, order_tau = 4, S=None, r=None, q=None, range_moneyness = [-.15, .15], range_tau = [0, 1], dailyWeights = None):
+class FPCA_penalized_totVar:
+    def __init__(self, moneyness, tau, totVar, nb_spline_moneyness = 10, nb_spline_tau = 10, order_moneyness = 4, order_tau = 4, S=None, r=None, q=None, range_moneyness = [-.15, .15], range_tau = [0, 1], dailyWeights = None):
         self.S = S
         self.r = r
         self.q = q
         
         if dailyWeights is None:
-            self.dailyWeights = np.repeat(1, len(implVar))
-        elif len(dailyWeights) != len(implVar):
-            raise ValueError("the length of the daily weight vector has to be the same as the number of days observed len(implVar)")
+            self.dailyWeights = np.repeat(1, len(totVar))
+        elif len(dailyWeights) != len(totVar):
+            raise ValueError("the length of the daily weight vector has to be the same as the number of days observed len(totVar)")
         else:
             self.dailyWeights = dailyWeights
         
         # Clean data once to avoid repeated computation in iterations
         self.cleaned_data = []
-        for i in range(len(implVar)):
+        for i in range(len(totVar)):
             m_f = np.asarray(moneyness[i]).flatten()
             t_f = np.asarray(tau[i]).flatten()
-            implVar_f = np.asarray(implVar[i]).flatten()
-            mask = ~np.isnan(implVar_f) & ~np.isnan(m_f) & ~np.isnan(t_f)
-            self.cleaned_data.append((m_f[mask], t_f[mask], implVar_f[mask]))
+            totVar_f = np.asarray(totVar[i]).flatten()
+            mask = ~np.isnan(totVar_f) & ~np.isnan(m_f) & ~np.isnan(t_f)
+            self.cleaned_data.append((m_f[mask], t_f[mask], totVar_f[mask]))
         
         # Range of moneyness and time to expiry (tau) for which the model will be trained on
         self.range_moneyness = range_moneyness # range set for logMoneyness (can be changed depending on type of moneyness)
@@ -94,8 +94,8 @@ class FPCA_penalized_implVar:
         D_diff_t = np.diff(np.eye(S_tau), n=d_t, axis=0)
         
         # Note: Row-major (C-style) Kronecker order used here
-        P_m = np.kron(D_diff_m.T @ D_diff_m, np.eye(S_tau))
-        P_m2 = np.kron(D_diff_m2.T @ D_diff_m2, np.eye(S_tau))
+        P_m = np.kron(D_diff_m.T @ D_diff_m, np.diag(1/(fpca.t_t[4:]**2)))
+        P_m2 = np.kron(D_diff_m2.T @ D_diff_m2, np.diag(1/(fpca.t_t[4:]**2)))
         P_t = np.kron(np.eye(S_m), D_diff_t.T @ D_diff_t)
         P = omega_m * P_m + omega_m2 * P_m2 + omega_t * P_t
         
@@ -113,23 +113,24 @@ class FPCA_penalized_implVar:
             scores = []
             mse_list = []
             for i in range(len(self.cleaned_data)):
-                m_clean, tau_clean, implVar_clean = self.cleaned_data[i]
+                m_clean, tau_clean, totVar_clean = self.cleaned_data[i]
                 
-                if len(implVar_clean) == 0:
+                if len(totVar_clean) == 0:
                     scores.append(0.0)
                     continue
 
                 # Build the design matrix X (features)
                 # Evaluate every basis function on the discrete (moneyness, tau) points
                 X = self.evaluator(B, np.column_stack([m_clean, tau_clean])).reshape(-1, 1)
-
+                # weights_tau = 1/(tau_clean**2)
+                
                 # Fit the linear regression model for alpha_i
                 reg = LinearRegression(fit_intercept=False)
-                reg.fit(X, implVar_clean)
+                reg.fit(X, totVar_clean)
 
                 alpha_i = reg.coef_[0]
                 scores.append(alpha_i)
-                mse_list.append(np.mean((implVar_clean - reg.predict(X))**2))
+                mse_list.append(np.mean((totVar_clean - reg.predict(X))**2))
             
             avg_mse = np.mean(mse_list)
             print(f'FPC 1, Iteration {j+1} : MSE change = {(avg_mse - old_mse) / old_mse}, Max B Change = {maxBChange}')
@@ -148,23 +149,24 @@ class FPCA_penalized_implVar:
             sum_XWy = np.zeros(n_Beta)
             
             for i in range(len(self.cleaned_data)):
-                m_clean, tau_clean, implVar_clean = self.cleaned_data[i]
-                if len(implVar_clean) == 0: continue
+                m_clean, tau_clean, totVar_clean = self.cleaned_data[i]
+                if len(totVar_clean) == 0: continue
                 
                 # Create weights such that every day has a standardized weight in the regression no matter the number of observations of the surface on that day
-                I_i = len(implVar_clean)
+                I_i = len(totVar_clean)
                 W_i = self.dailyWeights[i] / I_i 
+                W_tau = np.diag(1/(tau_clean**2))
                 
                 # Basis matrices
                 D_m = BSpline.design_matrix(m_clean, self.t_m, self.order_moneyness - 1).toarray()
                 D_t = BSpline.design_matrix(tau_clean, self.t_t, self.order_tau - 1).toarray()
                 
                 # Row-wise Kronecker product using einsum
-                X_i = np.einsum('ja,jb->jab', D_m, D_t).reshape(len(implVar_clean), -1)
+                X_i = np.einsum('ja,jb->jab', D_m, D_t).reshape(len(totVar_clean), -1)
                 
                 alpha_i = scores[i]
-                sum_XWX += W_i * (alpha_i**2) * (X_i.T @ X_i)
-                sum_XWy += W_i * alpha_i * (X_i.T @ implVar_clean)
+                sum_XWX += W_i * (alpha_i**2) * (X_i.T @ W_tau @ X_i)
+                sum_XWy += W_i * alpha_i * (X_i.T @ W_tau @ totVar_clean)
             
             
             if monotone:
@@ -232,14 +234,14 @@ class FPCA_penalized_implVar:
         # Pre-compute fixed residual surfaces from previously fitted FPCs and their fixed scores
         cleaned_residuals = []
         for i in range(len(self.cleaned_data)):
-            m_clean, tau_clean, implVar_clean = self.cleaned_data[i]
-            if len(implVar_clean) == 0:
+            m_clean, tau_clean, totVar_clean = self.cleaned_data[i]
+            if len(totVar_clean) == 0:
                 cleaned_residuals.append(np.array([]))
             else:
-                prev_fit = np.zeros(len(implVar_clean))
+                prev_fit = np.zeros(len(totVar_clean))
                 for k in range(len(self.BList)):
                     prev_fit += self.scoreMat[i, k] * self.evaluator(self.BList[k], np.column_stack([m_clean, tau_clean]))
-                cleaned_residuals.append(implVar_clean - prev_fit)
+                cleaned_residuals.append(totVar_clean - prev_fit)
 
         # Add a column for the new FPC scores
         self.scoreMat = np.column_stack((self.scoreMat, np.zeros((len(self.cleaned_data), 1))))
@@ -252,18 +254,18 @@ class FPCA_penalized_implVar:
         D_diff_t = np.diff(np.eye(L), n=d_t, axis=0)
         
         # Note: Row-major (C-style) Kronecker order used here
-        P_m = np.kron(D_diff_m.T @ D_diff_m, np.eye(L))
-        P_m2 = np.kron(D_diff_m2.T @ D_diff_m2, np.eye(L))
+        P_m = np.kron(D_diff_m.T @ D_diff_m, np.diag(1/(fpca.t_t[4:]**2)))
+        P_m2 = np.kron(D_diff_m2.T @ D_diff_m2, np.diag(1/(fpca.t_t[4:]**2)))
         P_t = np.kron(np.eye(K), D_diff_t.T @ D_diff_t)
         P = omega_m * P_m + omega_m2 * P_m2 + omega_t * P_t
         
         while j < maxit:
             mse_list = []  
             for i in range(len(self.cleaned_data)):
-                m_clean, tau_clean, implVar_clean = self.cleaned_data[i]
+                m_clean, tau_clean, totVar_clean = self.cleaned_data[i]
                 resid_i = cleaned_residuals[i]
                 
-                if len(implVar_clean) == 0:
+                if len(totVar_clean) == 0:
                     self.scoreMat[i, -1] = 0.0
                     continue
 
@@ -295,25 +297,26 @@ class FPCA_penalized_implVar:
             sum_XWy = np.zeros(n_Beta)
             
             for i in range(len(self.cleaned_data)):
-                m_clean, tau_clean, implVar_clean = self.cleaned_data[i]
+                m_clean, tau_clean, totVar_clean = self.cleaned_data[i]
                 resid_i = cleaned_residuals[i]
-                if len(implVar_clean) == 0: continue
+                if len(totVar_clean) == 0: continue
                 
                 # Create weights such that every day has a standardized weight in the regression no matter the number of observations of the surface on that day
-                I_i = len(implVar_clean)
+                I_i = len(totVar_clean)
                 W_i = self.dailyWeights[i] / I_i 
+                W_tau = np.diag(1/(tau_clean**2))
                 
                 # Basis matrices
                 D_m = BSpline.design_matrix(m_clean, self.t_m, self.order_moneyness - 1).toarray()
                 D_t = BSpline.design_matrix(tau_clean, self.t_t, self.order_tau - 1).toarray()
                 
                 # Row-wise Kronecker product using einsum to build basis design matrix
-                X_i = np.einsum('ja,jb->jab', D_m, D_t).reshape(len(implVar_clean), -1)
+                X_i = np.einsum('ja,jb->jab', D_m, D_t).reshape(len(totVar_clean), -1)
                 
                 curr_alpha = self.scoreMat[i, -1]
                 
-                sum_XWX += W_i * (curr_alpha**2) * (X_i.T @ X_i)
-                sum_XWy += W_i * curr_alpha * (X_i.T @ resid_i)
+                sum_XWX += W_i * (curr_alpha**2) * (X_i.T @ W_tau @ X_i)
+                sum_XWy += W_i * curr_alpha * (X_i.T @ W_tau @ resid_i)
             
             # Constraints matrix A: A @ Beta = 0 for each previous FPC
             A_list = []
@@ -361,35 +364,35 @@ class FPCA_penalized_implVar:
         - scores: 1D array of scores corresponding to each B
         
         Returns:
-        - reconstructed_implVar: 1D array of length n
+        - reconstructed_totVar: 1D array of length n
         """
-        reconstructed_implVar = np.zeros(len(coords))
+        reconstructed_totVar = np.zeros(len(coords))
         for k in range(len(BList)):
-            reconstructed_implVar += scores[k] * self.evaluator(BList[k], coords)
-        return reconstructed_implVar
+            reconstructed_totVar += scores[k] * self.evaluator(BList[k], coords)
+        return reconstructed_totVar
 
-    def project_to_scores(self, coords, implVar, BList):
+    def project_to_scores(self, coords, totVar, BList):
         """
-        Projects the given observations (coords and implVar) onto the list of eigenfunctions (BList)
+        Projects the given observations (coords and totVar) onto the list of eigenfunctions (BList)
         to estimate the scores using linear regression without intercept.
         
         Parameters:
         - coords: 2D array of shape (n, 2)
-        - implVar: 1D array of implied variances corresponding to coords
+        - totVar: 1D array of implied variances corresponding to coords
         - BList: List of 2D B matrices representing the eigenfunctions
         
         Returns:
         - scores: 1D array of length len(BList)
         """
-        if len(implVar) == 0 or len(BList) == 0:
+        if len(totVar) == 0 or len(BList) == 0:
             return np.zeros(len(BList))
             
-        X = np.zeros((len(implVar), len(BList)))
+        X = np.zeros((len(totVar), len(BList)))
         for k in range(len(BList)):
             X[:, k] = self.evaluator(BList[k], coords)
             
         reg = LinearRegression(fit_intercept=False)
-        reg.fit(X, implVar)
+        reg.fit(X, totVar)
         return reg.coef_
 
     def cross_validate_penalties(self, omega_m_grid, omega_t_grid, omega_m2_grid=None, n_splits=5, 
@@ -546,9 +549,9 @@ class FPCA_penalized_implVar:
         """
         Fits the model on train days and evaluates on validation days.
         """
-        # Create a new FPCA_penalized_implVar instance for training on the subset of days
-        fpca_train = FPCA_penalized_implVar(
-            moneyness=[], tau=[], implVar=[],
+        # Create a new FPCA_penalized_totVar instance for training on the subset of days
+        fpca_train = FPCA_penalized_totVar(
+            moneyness=[], tau=[], totVar=[],
             nb_spline_moneyness=self.nb_spline_moneyness,
             nb_spline_tau=self.nb_spline_tau,
             order_moneyness=self.order_moneyness,
@@ -574,10 +577,10 @@ class FPCA_penalized_implVar:
         else:
             fpca_train.scoreMat = np.zeros((len(train_idx), len(previous_BList)))
             for local_i, global_i in enumerate(train_idx):
-                m_clean, tau_clean, implVar_clean = self.cleaned_data[global_i]
-                if len(implVar_clean) > 0:
+                m_clean, tau_clean, totVar_clean = self.cleaned_data[global_i]
+                if len(totVar_clean) > 0:
                     coords = np.column_stack([m_clean, tau_clean])
-                    fpca_train.scoreMat[local_i, :] = fpca_train.project_to_scores(coords, implVar_clean, previous_BList)
+                    fpca_train.scoreMat[local_i, :] = fpca_train.project_to_scores(coords, totVar_clean, previous_BList)
             _, B_new = fpca_train.subsequent_FPC_fit(
                 threshold=threshold, maxit=maxit, omega_m=omega_m, omega_m2=omega_m2, omega_t=omega_t, d_m=d_m, d_m2=d_m2, d_t=d_t
             )
@@ -590,13 +593,13 @@ class FPCA_penalized_implVar:
         val_cal_viols = []
         val_but_viols = []
         for i in val_idx:
-            m_val, tau_val, implVar_val = self.cleaned_data[i]
-            if len(implVar_val) == 0:
+            m_val, tau_val, totVar_val = self.cleaned_data[i]
+            if len(totVar_val) == 0:
                 continue
             coords_val = np.column_stack([m_val, tau_val])
-            scores_val = self.project_to_scores(coords_val, implVar_val, BList_val)
+            scores_val = self.project_to_scores(coords_val, totVar_val, BList_val)
             y_hat_val = self.reconstruct_surface(coords_val, BList_val, scores_val)
-            mse_val = np.mean((implVar_val - y_hat_val)**2)
+            mse_val = np.mean((totVar_val - y_hat_val)**2)
             
             if theta_cal > 0.0 or theta_but > 0.0:
                 m_grid = np.linspace(self.range_moneyness[0], self.range_moneyness[1], 15)
@@ -643,24 +646,24 @@ class FPCA_penalized_implVar:
         val_data = []
         
         for i in range(n_days):
-            m_clean, tau_clean, implVar_clean = self.cleaned_data[i]
+            m_clean, tau_clean, totVar_clean = self.cleaned_data[i]
             day_folds = fold_obs_splits[i]
             
             val_idx = day_folds[fold_idx]
             train_idx = np.concatenate([day_folds[j] for j in range(len(day_folds)) if j != fold_idx])
             
             if len(train_idx) > 0:
-                train_cleaned_data.append((m_clean[train_idx], tau_clean[train_idx], implVar_clean[train_idx]))
+                train_cleaned_data.append((m_clean[train_idx], tau_clean[train_idx], totVar_clean[train_idx]))
             else:
                 train_cleaned_data.append((np.array([]), np.array([]), np.array([])))
                 
             if len(val_idx) > 0:
-                val_data.append((np.column_stack([m_clean[val_idx], tau_clean[val_idx]]), implVar_clean[val_idx], train_idx))
+                val_data.append((np.column_stack([m_clean[val_idx], tau_clean[val_idx]]), totVar_clean[val_idx], train_idx))
             else:
                 val_data.append(None)
                 
-        fpca_train = FPCA_penalized_implVar(
-            moneyness=[], tau=[], implVar=[],
+        fpca_train = FPCA_penalized_totVar(
+            moneyness=[], tau=[], totVar=[],
             nb_spline_moneyness=self.nb_spline_moneyness,
             nb_spline_tau=self.nb_spline_tau,
             order_moneyness=self.order_moneyness,
@@ -684,10 +687,10 @@ class FPCA_penalized_implVar:
         else:
             fpca_train.scoreMat = np.zeros((n_days, len(previous_BList)))
             for i in range(n_days):
-                m_clean, tau_clean, implVar_clean = train_cleaned_data[i]
-                if len(implVar_clean) > 0:
+                m_clean, tau_clean, totVar_clean = train_cleaned_data[i]
+                if len(totVar_clean) > 0:
                     coords = np.column_stack([m_clean, tau_clean])
-                    fpca_train.scoreMat[i, :] = fpca_train.project_to_scores(coords, implVar_clean, previous_BList)
+                    fpca_train.scoreMat[i, :] = fpca_train.project_to_scores(coords, totVar_clean, previous_BList)
             _, B_new = fpca_train.subsequent_FPC_fit(
                 threshold=threshold, maxit=maxit, omega_m=omega_m, omega_m2=omega_m2, omega_t=omega_t, d_m=d_m, d_m2=d_m2, d_t=d_t
             )
@@ -702,19 +705,19 @@ class FPCA_penalized_implVar:
             val_info = val_data[i]
             if val_info is None:
                 continue
-            coords_val, implVar_val, train_idx = val_info
+            coords_val, totVar_val, train_idx = val_info
             
-            m_clean, tau_clean, implVar_clean = self.cleaned_data[i]
+            m_clean, tau_clean, totVar_clean = self.cleaned_data[i]
             coords_train = np.column_stack([m_clean[train_idx], tau_clean[train_idx]])
-            implVar_train = implVar_clean[train_idx]
+            totVar_train = totVar_clean[train_idx]
             
-            if len(implVar_train) == 0:
+            if len(totVar_train) == 0:
                 continue
                 
-            scores_train_i = self.project_to_scores(coords_train, implVar_train, BList_val)
+            scores_train_i = self.project_to_scores(coords_train, totVar_train, BList_val)
             
             y_hat_val = self.reconstruct_surface(coords_val, BList_val, scores_train_i)
-            mse_val = np.mean((implVar_val - y_hat_val)**2)
+            mse_val = np.mean((totVar_val - y_hat_val)**2)
             
             if theta_cal > 0.0 or theta_but > 0.0:
                 m_grid = np.linspace(self.range_moneyness[0], self.range_moneyness[1], 15)
@@ -749,13 +752,13 @@ class FPCA_penalized_implVar:
             'but_viol': np.mean(val_but_viols)
         }
 
-    def implVar_to_price_surface(self, coords, implVar, day_index=0):
+    def totVar_to_price_surface(self, coords, totVar, day_index=0):
         """
         Computes the Black-Scholes call option price surface from the implied variance surface.
         
         Parameters:
         - coords: 2D array of shape (n, 2) where column 0 is log-moneyness and column 1 is time to expiry (tau).
-        - implVar: 1D array of implied variances corresponding to coords.
+        - totVar: 1D array of implied variances corresponding to coords.
         - day_index: Index of the day to retrieve the underlying stock price (S), risk-free rate (r), and dividend rate (q).
         
         Returns:
@@ -773,10 +776,10 @@ class FPCA_penalized_implVar:
         K = S_val * np.exp(log_m)
         
         tau_safe = np.maximum(tau, 1e-10)
-        implVar_safe = np.maximum(implVar, 1e-10)
-        iv_safe = np.sqrt(implVar_safe)
+        totVar_safe = np.maximum(totVar, 1e-10)
+        iv_safe = np.sqrt(totVar_safe/tau_safe)
         
-        d1 = (-log_m + (r_val - q_val + 0.5 * implVar_safe) * tau_safe) / (iv_safe * np.sqrt(tau_safe))
+        d1 = (-log_m + (r_val - q_val + 0.5 * totVar_safe) * tau_safe) / (iv_safe * np.sqrt(tau_safe))
         d2 = d1 - iv_safe * np.sqrt(tau_safe)
         
         call_prices = S_val * np.exp(-q_val * tau_safe) * norm.cdf(d1) - K * np.exp(-r_val * tau_safe) * norm.cdf(d2)
@@ -798,15 +801,15 @@ class FPCA_penalized_implVar:
         cumulative_rss = np.zeros(num_fpcs)
         
         for i in range(len(self.cleaned_data)):
-            m_clean, tau_clean, implVar_clean = self.cleaned_data[i]
-            if len(implVar_clean) == 0: continue
+            m_clean, tau_clean, totVar_clean = self.cleaned_data[i]
+            if len(totVar_clean) == 0: continue
             
             coords = np.column_stack([m_clean, tau_clean])
-            total_tss += np.sum(implVar_clean**2)
+            total_tss += np.sum(totVar_clean**2)
             
             for k in range(1, num_fpcs + 1):
                 y_hat = self.reconstruct_surface(coords, self.BList[:k], self.scoreMat[i, :k])
-                cumulative_rss[k-1] += np.sum((implVar_clean - y_hat)**2)
+                cumulative_rss[k-1] += np.sum((totVar_clean - y_hat)**2)
                 
         # Cumulative proportion of variance explained
         prop_var_cum = 1 - (cumulative_rss / total_tss)
@@ -876,8 +879,8 @@ class FPCA_penalized_implVar:
         t_breakPts_m = np.linspace(range_moneyness[0], range_moneyness[1], nb_spline_moneyness - k_m + 1)
         self.t_m = np.concatenate(([range_moneyness[0]] * k_m, t_breakPts_m, [range_moneyness[1]] * k_m))
         
-        t_breakPts_t = np.linspace(range_tau[0], range_tau[1], nb_spline_tau - k_t + 1)
-        self.t_t = np.concatenate((np.linspace(range_tau[0] - k_t*(t_breakPts_t[1] - t_breakPts_t[0]), range_tau[0]- (t_breakPts_t[1] - t_breakPts_t[0]), k_t), t_breakPts_t, np.linspace(range_tau[1]+ (t_breakPts_t[-1] - t_breakPts_t[-2]), range_tau[1]+ k_t*(t_breakPts_t[-1] - t_breakPts_t[-2]), k_t)))
+        t_breakPts_t = np.linspace(range_tau[0], range_tau[1], nb_spline_tau - k_t + 1)**2
+        self.t_t = np.concatenate(([range_tau[0]] * k_t, t_breakPts_t, [range_tau[1]] * k_t))
         
         # Pre-compute Gram matrices for normalization
         self.W_m = self._compute_gram_matrix(self.t_m, order_moneyness, range_moneyness)
@@ -944,7 +947,7 @@ class FPCA_penalized_implVar:
         - num_points: Number of points along each dimension for the grid.
         - figAngle: Viewing angle (azimuth).
         """
-        m_clean, tau_clean, implVar_clean = self.cleaned_data[index]
+        m_clean, tau_clean, totVar_clean = self.cleaned_data[index]
         scores = self.scoreMat[index, :]
         
         # Grid for surface
@@ -961,10 +964,10 @@ class FPCA_penalized_implVar:
         ax = fig.add_subplot(111, projection='3d')
         
         # Plot reconstructed surface converted to IV
-        ax.plot_surface(M, Tau, np.sqrt(np.maximum(0, Z)), cmap='viridis', edgecolor='none', alpha=0.5)
+        ax.plot_surface(M, Tau, np.sqrt(np.maximum(0, Z)/Tau), cmap='viridis', edgecolor='none', alpha=0.5)
         
         # Plot actual observations converted to IV
-        ax.scatter(m_clean, tau_clean, np.sqrt(np.maximum(0, implVar_clean)), color='red', s=10, label='Actual Observations')
+        ax.scatter(m_clean, tau_clean, np.sqrt(np.maximum(0, totVar_clean)/tau_clean), color='red', s=10, label='Actual Observations')
         
         ax.set_title(f"Reconstructed IVS vs Actual Observations (Day {index})")
         ax.set_xlabel("Moneyness (m)")
@@ -975,7 +978,7 @@ class FPCA_penalized_implVar:
         plt.legend()
         plt.show()
 
-    def plot_reconstruction_implVar(self, index, num_points=30, figAngle=-70):
+    def plot_reconstruction_totVar(self, index, num_points=30, figAngle=-70):
         """
         Plots the reconstructed Implied Variance Surface for a given day and overlaps the actual observations.
         
@@ -984,7 +987,7 @@ class FPCA_penalized_implVar:
         - num_points: Number of points along each dimension for the grid.
         - figAngle: Viewing angle (azimuth).
         """
-        m_clean, tau_clean, implVar_clean = self.cleaned_data[index]
+        m_clean, tau_clean, totVar_clean = self.cleaned_data[index]
         scores = self.scoreMat[index, :]
         
         # Grid for surface
@@ -1004,7 +1007,7 @@ class FPCA_penalized_implVar:
         ax.plot_surface(M, Tau, Z, cmap='viridis', edgecolor='none', alpha=0.5)
         
         # Plot actual observations
-        ax.scatter(m_clean, tau_clean, implVar_clean, color='red', s=10, label='Actual Observations')
+        ax.scatter(m_clean, tau_clean, totVar_clean, color='red', s=10, label='Actual Observations')
         
         ax.set_title(f"Reconstructed Implied Variance Surface vs Actual Observations (Day {index})")
         ax.set_xlabel("Moneyness (m)")
@@ -1037,12 +1040,12 @@ class FPCA_penalized_implVar:
         M, T = np.meshgrid(m_grid, tau_grid)
         coords = np.column_stack([M.flatten(), T.flatten()])
         
-        # implVar is v(m, tau) = sigma(m, tau)^2
-        implVar_flat = self.reconstruct_surface(coords, self.BList, scores)
-        implVar = implVar_flat.reshape(M.shape)
+        # totVar is w(m, tau) = tau * sigma(m, tau)^2
+        totVar_flat = self.reconstruct_surface(coords, self.BList, scores)
+        totVar = totVar_flat.reshape(M.shape)
         
-        # Total variance w(m, tau) = v(m, tau) * tau = implVar * T
-        w = implVar * T
+        # Total variance w(m, tau) = v(m, tau) * tau = totVar
+        w = totVar
         
         # 1. Calendar Spread Metric: d_tau w
         calendar_metrics = np.zeros_like(w)
@@ -1108,9 +1111,9 @@ class FPCA_penalized_implVar:
         M, T = np.meshgrid(m_grid, tau_grid)
         coords = np.column_stack([M.flatten(), T.flatten()])
         
-        implVar_flat = self.reconstruct_surface(coords, self.BList, scores)
+        totVar_flat = self.reconstruct_surface(coords, self.BList, scores)
         
-        call_prices_flat = self.implVar_to_price_surface(coords, implVar_flat, day_index=day_index)
+        call_prices_flat = self.totVar_to_price_surface(coords, totVar_flat, day_index=day_index)
         
         S_val = self.S[day_index] if self.S is not None and day_index < len(self.S) else 1.0
         c_flat = call_prices_flat / S_val
@@ -1195,8 +1198,8 @@ class FPCA_penalized_implVar:
         """
         Measures static arbitrage in the raw data for a given day.
         """
-        m_clean, tau_clean, implVar_clean = self.cleaned_data[day_index]
-        if len(implVar_clean) == 0:
+        m_clean, tau_clean, totVar_clean = self.cleaned_data[day_index]
+        if len(totVar_clean) == 0:
             return {
                 'calendar_violations': 0,
                 'calendar_violation_sum': 0.0,
@@ -1209,7 +1212,7 @@ class FPCA_penalized_implVar:
             }
             
         coords = np.column_stack([m_clean, tau_clean])
-        call_prices = self.implVar_to_price_surface(coords, implVar_clean, day_index=day_index)
+        call_prices = self.totVar_to_price_surface(coords, totVar_clean, day_index=day_index)
         
         S_val = self.S[day_index] if self.S is not None and day_index < len(self.S) else 1.0
         r_val = self.r[day_index] if self.r is not None and day_index < len(self.r) else 0.0
@@ -1371,7 +1374,7 @@ if __name__ == '__main__':
     sqrtTau = [np.sqrt(t) for t in tau]
     
     # Implied variance is iv^2
-    implVar_data = [(v**2) for v in iv]
+    totVar_data = [t*(v**2) for t,v in zip(tau,iv)]
     
     with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_lists_traded_testing.pkl", "rb") as f:
         uniqueDates_test = pickle.load(f)
@@ -1385,11 +1388,11 @@ if __name__ == '__main__':
     logMoneyness_test = [np.log(m) for m in moneyness_test]
     sqrtTau_test = [np.sqrt(t) for t in tau_test]
     
-    implVar_data_test = [(v**2) for v in iv_test]
+    totVar_data_test = [t*(v**2) for t,v in zip(tau_test, iv_test)]
     
     #%% Estimate the First few FPCs
-    fpca = FPCA_penalized_implVar(logMoneyness, tau, implVar_data, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
-    alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=0.05**2, omega_m2= 0.05**2, omega_t=0.05**2, monotone=True)
+    fpca = FPCA_penalized_totVar(logMoneyness, tau, totVar_data, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
+    alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=0.02**2, omega_m2= 0.05**2, omega_t=0.1**2, monotone=False)
     fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
     
     alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.025**2, omega_m2= 0.0**2, omega_t=0.025**2)
@@ -1400,13 +1403,13 @@ if __name__ == '__main__':
     
     print(fpca.compute_explained_variance())
     
-    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_traded_FPCA_implVariance.pkl", "wb") as f:
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_traded_FPCA_totVariance.pkl", "wb") as f:
         pickle.dump(fpca.scoreMat, f)
         pickle.dump(fpca.BList, f)
     
     #%% Load Basis representation fit
-    fpca = FPCA_penalized_implVar(logMoneyness, tau, implVar_data, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
-    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_traded_FPCA_implVariance.pkl", "rb") as f:
+    fpca = FPCA_penalized_totVar(logMoneyness, tau, totVar_data, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_traded_FPCA_totVariance.pkl", "rb") as f:
         fpca.scoreMat = pickle.load(f)
         fpca.BList = pickle.load(f)
         
@@ -1416,9 +1419,9 @@ if __name__ == '__main__':
     
     for i in range(len(uniqueDates_test)):
         coords_val = np.column_stack([logMoneyness_test[i], tau_test[i]])
-        scores_val = fpca.project_to_scores(coords_val, implVar_data_test[i], fpca.BList)
+        scores_val = fpca.project_to_scores(coords_val, totVar_data_test[i], fpca.BList)
         y_hat_val = fpca.reconstruct_surface(coords_val, fpca.BList, scores_val)
-        val_mses_test.append(np.mean((implVar_data_test[i] - y_hat_val)**2))
+        val_mses_test.append(np.mean((totVar_data_test[i] - y_hat_val)**2))
         val_scores_test.append(scores_val)
         
     print(np.mean(np.sqrt(val_mses_test)))
@@ -1429,9 +1432,9 @@ if __name__ == '__main__':
     
     for i in range(len(uniqueDates)):
         coords_val = np.column_stack([logMoneyness[i], tau[i]])
-        scores_val = fpca.project_to_scores(coords_val, implVar_data[i], fpca.BList)
+        scores_val = fpca.project_to_scores(coords_val, totVar_data[i], fpca.BList)
         y_hat_val = fpca.reconstruct_surface(coords_val, fpca.BList, scores_val)
-        val_mses.append(np.mean((implVar_data[i] - y_hat_val)**2))
+        val_mses.append(np.mean((totVar_data[i] - y_hat_val)**2))
         val_scores.append(scores_val)
             
     print(np.mean(np.sqrt(val_mses)))
@@ -1471,7 +1474,7 @@ if __name__ == '__main__':
     sqrtTau = [np.sqrt(t) for t in tau]
     
     # Implied variance is iv^2
-    implVar_data = [(v**2) for v in iv]
+    totVar_data = [(v**2) for v in iv]
     
     with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/SPX_lists_testing.pkl", "rb") as f:
         uniqueDates_test = pickle.load(f)
@@ -1485,10 +1488,10 @@ if __name__ == '__main__':
     logMoneyness_test = [np.log(m) for m in moneyness_test]
     sqrtTau_test = [np.sqrt(t) for t in tau_test]
     
-    implVar_data_test = [(v**2) for v in iv_test]
+    totVar_data_test = [(v**2) for v in iv_test]
     
     #%% Estimate the First few FPCs
-    fpca = FPCA_penalized_implVar(logMoneyness, tau, implVar_data, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
+    fpca = FPCA_penalized_totVar(logMoneyness, tau, totVar_data, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
     alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=0.05**2, omega_m2= 0.05**2, omega_t=0.05**2, monotone=False)
     fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
     
@@ -1500,13 +1503,13 @@ if __name__ == '__main__':
     
     print(fpca.compute_explained_variance())
     
-    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/SPX_FPCA_implVariance.pkl", "wb") as f:
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/SPX_FPCA_totVariance.pkl", "wb") as f:
         pickle.dump(fpca.scoreMat, f)
         pickle.dump(fpca.BList, f)
     
     #%% Load Basis representation fit
-    fpca = FPCA_penalized_implVar(logMoneyness, tau, implVar_data, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
-    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/SPX_FPCA_implVariance.pkl", "rb") as f:
+    fpca = FPCA_penalized_totVar(logMoneyness, tau, totVar_data, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/SPX_data/SPX_FPCA_totVariance.pkl", "rb") as f:
         fpca.scoreMat = pickle.load(f)
         fpca.BList = pickle.load(f)
         
@@ -1516,11 +1519,11 @@ if __name__ == '__main__':
     
     for i in range(len(uniqueDates_test)):
         coords_val = np.column_stack([logMoneyness_test[i], tau_test[i]])
-        scores_val = fpca.project_to_scores(coords_val, implVar_data_test[i], fpca.BList)
+        scores_val = fpca.project_to_scores(coords_val, totVar_data_test[i], fpca.BList)
         y_hat_val = fpca.reconstruct_surface(coords_val, fpca.BList, scores_val)
-        val_mses_test.append(np.mean((implVar_data_test[i] - y_hat_val)**2))
+        val_mses_test.append(np.mean((totVar_data_test[i] - y_hat_val)**2))
         y_hat_val[y_hat_val<0] = 0
-        val_mses_test_ivs.append(np.mean((np.sqrt(implVar_data_test[i]) - np.sqrt(y_hat_val))**2))
+        val_mses_test_ivs.append(np.mean((np.sqrt(totVar_data_test[i]) - np.sqrt(y_hat_val))**2))
         
     print(np.mean(np.sqrt(val_mses_test)))
     print(np.mean(np.sqrt(val_mses_test_ivs)))
@@ -1531,11 +1534,11 @@ if __name__ == '__main__':
     
     for i in range(len(uniqueDates)):
         coords_val = np.column_stack([logMoneyness[i], tau[i]])
-        scores_val = fpca.project_to_scores(coords_val, implVar_data[i], fpca.BList)
+        scores_val = fpca.project_to_scores(coords_val, totVar_data[i], fpca.BList)
         y_hat_val = fpca.reconstruct_surface(coords_val, fpca.BList, scores_val)
-        val_mses.append(np.mean((implVar_data[i] - y_hat_val)**2))
+        val_mses.append(np.mean((totVar_data[i] - y_hat_val)**2))
         y_hat_val[y_hat_val<0] = 0
-        val_mses_ivs.append(np.mean((np.sqrt(implVar_data[i]) - np.sqrt(y_hat_val))**2))
+        val_mses_ivs.append(np.mean((np.sqrt(totVar_data[i]) - np.sqrt(y_hat_val))**2))
             
     print(np.mean(np.sqrt(val_mses)))
     print(np.mean(np.sqrt(val_mses_ivs)))
@@ -1546,13 +1549,13 @@ if __name__ == '__main__':
     nbButterfly = np.zeros(nbDays)
     for i in range(nbDays):
         day_scores = fpca.scoreMat[i, :]
-        calendar_metrics, butterfly_metrics = fpca.compute_arbitrage_metrics(day_scores, m_grid= np.linspace(-.15, .15, 5), tau_grid= np.linspace(.001, 1, 5))
+        calendar_metrics, butterfly_metrics = fpca.compute_arbitrage_metrics(day_scores, m_grid= np.linspace(-.15, .15, 50), tau_grid= np.linspace(.001, 1, 50))
         nbCalendar[i] = np.sum(calendar_metrics < 0)
         nbButterfly[i] = np.sum(butterfly_metrics < 0)
     
     uniqueDates_dates = pd.to_datetime(uniqueDates)
-    plt.plot(uniqueDates_dates, nbButterfly/(5*5), label="But. arb.")
-    plt.plot(uniqueDates_dates, nbCalendar/(5*5), label="Cal. arb.")
+    plt.plot(uniqueDates_dates, nbButterfly/(50*50), label="But. arb.")
+    plt.plot(uniqueDates_dates, nbCalendar/(50*50), label="Cal. arb.")
     plt.legend() 
     
     # Plot violations for the first day
