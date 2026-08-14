@@ -66,6 +66,7 @@ class FPCA_penalized_implVar:
         - d_m: order of the difference penalty for moneyness
         - d_m2: order of the second difference penalty for moneyness
         - d_t: order of the difference penalty for tau
+        - monotone: if True, enforces total variance monotonicity on the first FPC
 
         Returns:
         - scores: List of array of estimated scores for the first FPC
@@ -99,15 +100,10 @@ class FPCA_penalized_implVar:
         P_t = np.kron(np.eye(S_m), D_diff_t.T @ D_diff_t)
         P = omega_m * P_m + omega_m2 * P_m2 + omega_t * P_t
         
-        #check monotonicity condition
-        identityWithZeros = np.eye(S_tau)
-        identityWithZeros[0:3,:] = 0
-        D_diff_t_monotone = np.diff(identityWithZeros, n=1, axis=0)
-        np.fill_diagonal(D_diff_t_monotone,np.concatenate(([0,0],-(self.t_t[4:-3]/self.t_t[5:-2]))))
-        P_1 = np.kron(np.eye(S_m), D_diff_t_monotone)
-        
-        omegaMonotone = 10**6
-        delta = np.zeros((S_tau-1)*S_m) + .001
+        # Check monotonicity condition operator
+        P_1 = self._build_monotone_operator()
+        omegaMonotone = 1e6
+        delta = np.zeros((S_tau - 1) * S_m) + 0.001
         
         while j < maxit:
             scores = []
@@ -166,17 +162,8 @@ class FPCA_penalized_implVar:
                 sum_XWX += W_i * (alpha_i**2) * (X_i.T @ X_i)
                 sum_XWy += W_i * alpha_i * (X_i.T @ implVar_clean)
             
-            
             if monotone:
-                isNotMonotone = np.zeros((S_tau-1)*S_m)
-                for it in range(30):
-                    weightMonotone = np.diag(isNotMonotone * omegaMonotone)
-                    P_monotone = P_1.T @ weightMonotone @ P_1
-                    Beta = np.linalg.solve(sum_XWX + P + P_monotone, sum_XWy + P_1.T @ weightMonotone @ delta)
-                    isNotMonotone_new = (P_1 @ Beta <= delta) * 1
-                    if(np.sum(isNotMonotone != isNotMonotone_new) == 0): break
-                    isNotMonotone = isNotMonotone_new
-                    
+                Beta = self._solve_monotone_beta(sum_XWX, sum_XWy, P, P_1, delta, omegaMonotone=omegaMonotone)
             else:
                 # Solve penalized normal equations
                 Beta = np.linalg.solve(sum_XWX + P, sum_XWy)
@@ -187,6 +174,8 @@ class FPCA_penalized_implVar:
             # Rescale the B s.t. 2-norm of eigen function is 1
             norm = self.compute_norm(B)
             B = B / norm
+            if np.sum(B * old_B) < 0 and j > 0: 
+                B = -B
             j += 1
             
             maxBChange = np.max(np.abs(B - old_B))
@@ -196,9 +185,11 @@ class FPCA_penalized_implVar:
         self.BList.append(B)
         return scores, B
         
-    def subsequent_FPC_fit(self, threshold = 1e-4, maxit = 10, omega_m = 1.0, omega_m2 = 0.0, omega_t = 1.0, d_m = 2, d_m2 = 3, d_t = 2):
+    def subsequent_FPC_fit(self, threshold = 1e-4, maxit = 10, omega_m = 1.0, omega_m2 = 0.0, omega_t = 1.0, 
+                           d_m = 2, d_m2 = 3, d_t = 2, bound_calendar = True, q_lower = 99, q_upper = 1, omega_bound = 1e6):
         """
-        Estimate subsequent FPCs and their scores conditional on the FPC being orthogonal to all previous FPCs.
+        Estimate subsequent FPCs and their scores conditional on the FPC being orthogonal to all previous FPCs
+        and optionally bounded by an envelope ensuring non-decreasing total variance across sample days.
 
         Parameters:
         - threshold: indicate what change in MSE do we consider as reaching convergence
@@ -209,6 +200,10 @@ class FPCA_penalized_implVar:
         - d_m: order of the difference penalty for moneyness
         - d_m2: order of the second difference penalty for moneyness
         - d_t: order of the difference penalty for tau
+        - bound_calendar: if True, applies envelope constraints on P_1 @ Beta relative to previous FPCs
+        - q_lower: percentile for lower bound envelope (default 99)
+        - q_upper: percentile for upper bound envelope (default 1)
+        - omega_bound: weight for envelope boundary penalty (default 1e6)
 
         Returns:
         - scores: List of array of estimated scores for the current FPC
@@ -256,6 +251,8 @@ class FPCA_penalized_implVar:
         P_m2 = np.kron(D_diff_m2.T @ D_diff_m2, np.eye(L))
         P_t = np.kron(np.eye(K), D_diff_t.T @ D_diff_t)
         P = omega_m * P_m + omega_m2 * P_m2 + omega_t * P_t
+        
+        P_1 = self._build_monotone_operator()
         
         while j < maxit:
             mse_list = []  
@@ -321,21 +318,25 @@ class FPCA_penalized_implVar:
                 A_list.append((self.W_m @ prev_B @ self.W_t).flatten())
             A = np.array(A_list)
             
-            # Solve normal equations with linear equality constraints using KKT system:
-            KKT_A = np.block([
-                [sum_XWX + P, A.T],
-                [A, np.zeros((len(self.BList), len(self.BList)))]
-            ])
-            KKT_b = np.concatenate([sum_XWy, np.zeros(len(self.BList))])
-            
-            try:
-                sol = np.linalg.solve(KKT_A, KKT_b)
-                Beta = sol[:n_Beta]
-            except np.linalg.LinAlgError:
-                print('error in KKT system')
-                # Fallback to least squares if KKT matrix is singular
-                Beta, _, _, _ = np.linalg.lstsq(KKT_A, KKT_b, rcond=None)
-                Beta = Beta[:n_Beta]
+            if bound_calendar and len(self.BList) > 0:
+                L_k, U_k = self._compute_calendar_envelope_bounds(P_1, q_lower=q_lower, q_upper=q_upper)
+                Beta = self._solve_kkt_with_envelope(sum_XWX, sum_XWy, P, A, P_1, L_k, U_k, omega_bound=omega_bound)
+            else:
+                # Solve normal equations with linear equality constraints using KKT system:
+                KKT_A = np.block([
+                    [sum_XWX + P, A.T],
+                    [A, np.zeros((len(self.BList), len(self.BList)))]
+                ])
+                KKT_b = np.concatenate([sum_XWy, np.zeros(len(self.BList))])
+                
+                try:
+                    sol = np.linalg.solve(KKT_A, KKT_b)
+                    Beta = sol[:n_Beta]
+                except np.linalg.LinAlgError: #simply for rebostness of implementation, shouldn't really happen
+                    print('error in KKT system')
+                    # Fallback to least squares if KKT matrix is singular
+                    Beta, _, _, _ = np.linalg.lstsq(KKT_A, KKT_b, rcond=None)
+                    Beta = Beta[:n_Beta]
             
             # Row-major reshaping used to recover matrix form
             B = Beta.reshape(self.nb_spline_moneyness, self.nb_spline_tau)
@@ -343,6 +344,8 @@ class FPCA_penalized_implVar:
             # Rescale the B s.t. 2-norm of eigen function is 1
             norm = self.compute_norm(B)
             B = B / norm
+            if np.sum(B * old_B) < 0 and j > 0:
+                B = -B
             j += 1
             
             maxBChange = np.max(np.abs(B - old_B))
@@ -350,6 +353,129 @@ class FPCA_penalized_implVar:
             
         self.BList.append(B)
         return self.scoreMat[:, -1].tolist(), B
+       
+    def _build_monotone_operator(self):
+        """
+        Constructs the discrete maturity difference operator P_1 for total variance monotonicity.
+        P_1 @ vec(B) approximates the maturity slope of total variance for an eigenfunction.
+        """
+        S_m = self.nb_spline_moneyness
+        S_tau = self.nb_spline_tau
+        identityWithZeros = np.eye(S_tau)
+        identityWithZeros[0:3, :] = 0
+        D_diff_t_monotone = np.diff(identityWithZeros, n=1, axis=0)
+        np.fill_diagonal(D_diff_t_monotone, np.concatenate(([0, 0], -(self.t_t[4:-3] / self.t_t[5:-2]))))
+        P_1 = np.kron(np.eye(S_m), D_diff_t_monotone)
+        return P_1
+
+    def _solve_monotone_beta(self, sum_XWX, sum_XWy, P, P_1, delta, omegaMonotone=1e6, max_iter=30):
+        """
+        Solves the penalized normal equations for the first FPC with an active-set monotonicity penalty.
+        """
+        n_constraints = P_1.shape[0]
+        isNotMonotone = np.zeros(n_constraints)
+        Beta = None
+        for it in range(max_iter):
+            weightMonotone = np.diag(isNotMonotone * omegaMonotone)
+            P_monotone = P_1.T @ weightMonotone @ P_1
+            rhs_shift = P_1.T @ (isNotMonotone * omegaMonotone * delta)
+            Beta = np.linalg.solve(sum_XWX + P + P_monotone, sum_XWy + rhs_shift)
+            isNotMonotone_new = (P_1 @ Beta <= delta) * 1.0
+            if np.sum(isNotMonotone != isNotMonotone_new) == 0:
+                break
+            isNotMonotone = isNotMonotone_new
+        return Beta
+
+    def _compute_calendar_envelope_bounds(self, P_1, q_lower=99, q_upper=1):
+        """
+        Computes lower (L_k) and upper (U_k) bounds for the discrete maturity slope of component k,
+        ensuring composite total variance remains non-decreasing across sample days.
+        
+        Uses quantile thresholds (q_lower, q_upper) across sample days to prevent outliers from
+        over-constraining the eigenfunction.
+        """
+        S_m = self.nb_spline_moneyness
+        S_tau = self.nb_spline_tau
+        n_constraints = (S_tau - 1) * S_m #Constraints on first partial difference w.r.t. tau
+        
+        # Baseline slope from all previously fitted components: shape (n_constraints, len(BList))
+        U_prev = np.column_stack([P_1 @ prev_B.flatten() for prev_B in self.BList])
+        
+        # H_prev shape: (N_days, n_constraints) 
+        H_prev = self.scoreMat[:, :len(self.BList)] @ U_prev.T
+        
+        curr_scores = self.scoreMat[:, -1]
+        pos_mask = curr_scores > 1e-4
+        neg_mask = curr_scores < -1e-4
+        
+        if np.any(pos_mask):
+            # For positive score days: v_k >= -H_prev / alpha_k
+            lower_candidates = -H_prev[pos_mask] / curr_scores[pos_mask, None]
+            L_k = np.percentile(lower_candidates, q_lower, axis=0)
+        else:
+            L_k = -np.full(n_constraints, 1e5)
+            
+        if np.any(neg_mask):
+            # For negative score days: v_k <= H_prev / |alpha_k|
+            upper_candidates = H_prev[neg_mask] / np.abs(curr_scores[neg_mask, None])
+            U_k = np.percentile(upper_candidates, q_upper, axis=0)
+        else:
+            U_k = np.full(n_constraints, 1e5)
+            
+        # Guarantee feasibility (L_k <= U_k everywhere)
+        infeasible = L_k > U_k
+        if np.any(infeasible):
+            mid = 0.5 * (L_k[infeasible] + U_k[infeasible])
+            L_k[infeasible] = mid - 1e-4
+            U_k[infeasible] = mid + 1e-4
+            
+        return L_k, U_k
+
+    def _solve_kkt_with_envelope(self, sum_XWX, sum_XWy, P, A, P_1, L_k, U_k, omega_bound=1e6, max_iter=20):
+        """
+        Solves the regularized KKT system for subsequent FPC estimation subject to:
+          1. Orthogonality constraints: A @ Beta = 0
+          2. Envelope bounds: L_k <= P_1 @ Beta <= U_k
+        using an active-set quadratic penalty iteration.
+        """
+        n_Beta = self.nb_spline_moneyness * self.nb_spline_tau
+        n_constraints = (self.nb_spline_tau - 1) * self.nb_spline_moneyness
+        n_ortho = len(self.BList)
+        
+        is_lower = np.zeros(n_constraints)
+        is_upper = np.zeros(n_constraints)
+        Beta = np.zeros(n_Beta)
+        
+        for it in range(max_iter):
+            active_weights = (is_lower + is_upper) * omega_bound
+            target_shift = is_lower * L_k + is_upper * U_k
+            
+            P_active = P_1.T @ (active_weights[:, None] * P_1)
+            rhs_active = P_1.T @ (active_weights * target_shift)
+            
+            KKT_A = np.block([
+                [sum_XWX + P + P_active, A.T],
+                [A, np.zeros((n_ortho, n_ortho))]
+            ])
+            KKT_b = np.concatenate([sum_XWy + rhs_active, np.zeros(n_ortho)])
+            
+            try:
+                sol = np.linalg.solve(KKT_A, KKT_b)
+                Beta = sol[:n_Beta]
+            except np.linalg.LinAlgError:
+                Beta, _, _, _ = np.linalg.lstsq(KKT_A, KKT_b, rcond=None)
+                Beta = Beta[:n_Beta]
+                
+            v = P_1 @ Beta
+            new_lower = (v < L_k) * 1.0
+            new_upper = (v > U_k) * 1.0
+            
+            if np.all(new_lower == is_lower) and np.all(new_upper == is_upper):
+                break
+            is_lower = new_lower
+            is_upper = new_upper
+            
+        return Beta
 
     def reconstruct_surface(self, coords, BList, scores):
         """
