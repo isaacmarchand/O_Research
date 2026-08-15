@@ -174,7 +174,7 @@ class FPCA_penalized_implVar:
             # Rescale the B s.t. 2-norm of eigen function is 1
             norm = self.compute_norm(B)
             B = B / norm
-            if np.sum(B * old_B) < 0 and j > 0: 
+            if np.sum(B * old_B) < 0 and j > 0: #avoid oscillations in convergence
                 B = -B
             j += 1
             
@@ -344,7 +344,7 @@ class FPCA_penalized_implVar:
             # Rescale the B s.t. 2-norm of eigen function is 1
             norm = self.compute_norm(B)
             B = B / norm
-            if np.sum(B * old_B) < 0 and j > 0:
+            if np.sum(B * old_B) < 0 and j > 0: #avoid oscillations in convergence
                 B = -B
             j += 1
             
@@ -1518,10 +1518,10 @@ if __name__ == '__main__':
     alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=0.05**2, omega_m2= 0.05**2, omega_t=0.05**2, monotone=True)
     fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
     
-    alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.025**2, omega_m2= 0.0**2, omega_t=0.025**2)
+    alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.025**2, omega_m2= 0.0**2, omega_t=0.025**2, bound_calendar = True, q_lower = 100, q_upper = 0)
     fpca.plot_eigen_functions(B2, num_points=50, figAngle=-70)
     
-    alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.2**2, omega_m2= 0.1**2, omega_t=0.025**2)
+    alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.2**2, omega_m2= 0.1**2, omega_t=0.025**2, bound_calendar = True, q_lower = 100, q_upper = 0)
     fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
     
     print(fpca.compute_explained_variance())
