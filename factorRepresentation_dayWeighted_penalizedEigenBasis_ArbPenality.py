@@ -1004,7 +1004,7 @@ class FPCA_penalized_arbPenal:
         t_breakPts_m = np.linspace(range_moneyness[0], range_moneyness[1], nb_spline_moneyness - k_m + 1)
         self.t_m = np.concatenate(([range_moneyness[0]] * k_m, t_breakPts_m, [range_moneyness[1]] * k_m))
         
-        t_breakPts_t = np.linspace(range_tau[0], range_tau[1], nb_spline_tau - k_t + 1)
+        t_breakPts_t = np.linspace(range_tau[0], range_tau[1], nb_spline_tau - k_t + 1)**2
         self.t_t = np.concatenate((np.linspace(range_tau[0] - k_t*(t_breakPts_t[1] - t_breakPts_t[0]), range_tau[0]- (t_breakPts_t[1] - t_breakPts_t[0]), k_t), t_breakPts_t, np.linspace(range_tau[1]+ (t_breakPts_t[-1] - t_breakPts_t[-2]), range_tau[1]+ k_t*(t_breakPts_t[-1] - t_breakPts_t[-2]), k_t)))
         
         # Pre-compute Gram matrices for normalization
@@ -1620,13 +1620,13 @@ if __name__ == '__main__':
     nbButterfly = np.zeros(nbDays)
     for i in range(nbDays):
         day_scores = fpca.scoreMat[i, :]
-        calendar_metrics, butterfly_metrics = fpca.compute_arbitrage_metrics(day_scores, m_grid= np.linspace(-.15, .15, 5), tau_grid= np.linspace(.001, 1, 5))
+        calendar_metrics, butterfly_metrics = fpca.compute_arbitrage_metrics(day_scores, m_grid= np.linspace(-.15, .15, 50), tau_grid= np.linspace(.001, 1, 50))
         nbCalendar[i] = np.sum(calendar_metrics < 0)
         nbButterfly[i] = np.sum(butterfly_metrics < 0)
     
     uniqueDates_dates = pd.to_datetime(uniqueDates)
-    plt.plot(uniqueDates_dates, nbButterfly/(5*5), label="But. arb.")
-    plt.plot(uniqueDates_dates, nbCalendar/(5*5), label="Cal. arb.")
+    plt.plot(uniqueDates_dates, nbButterfly/(50*50), label="But. arb.")
+    plt.plot(uniqueDates_dates, nbCalendar/(50*50), label="Cal. arb.")
     plt.legend() 
     
     # Plot violations for the first day
