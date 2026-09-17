@@ -39,8 +39,8 @@ class FrancoisBetaExtractor:
         self.basis_functions = [
             lambda m, tau: np.ones_like(m),                                      # Basis 1: Long term ATM level
             lambda m, tau: np.exp(-np.sqrt(tau / self.T_conv)),                  # Basis 2: Time to maturity slope
-            lambda m, tau: m * (m <= 0) + (np.exp(2 * m) - 1) / (np.exp(2 * m) + 1) * (m > 0), # Basis 3: Moneyness slope
-            lambda m, tau: (1 - np.exp(-(m**2))) * np.log(self.T_max / tau),     # Basis 4: Smile attenuation
+            lambda m, tau: m * (m >= 0) + (np.exp(2 * m) - 1) / (np.exp(2 * m) + 1) * (m < 0), # Basis 3: Moneyness slope
+            lambda m, tau: (1 - np.exp(-(m**2))) * np.log(tau / self.T_max),     # Basis 4: Smile attenuation
             lambda m, tau: (1 - np.exp((3 * m)**3)) * np.log(tau / self.T_max) * (m < 0)       # Basis 5: Smirk
         ]
         
