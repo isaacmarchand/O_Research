@@ -848,8 +848,8 @@ if __name__ == "__main__":
 
     #%% Display Goodness of Fit Summary
     print("=== Francois et al. (2022) Model - Goodness of Fit Summary ===")
-    print(f"Training Set  - Mean MSE: {np.mean(val_mses):.6e} | Mean RMSE: {np.mean(val_rmse):.6f} | Total R^2: {total_r2_train:.4%}")
-    print(f"Testing Set   - Mean MSE: {np.mean(val_mses_test):.6e} | Mean RMSE: {np.mean(val_rmse_test):.6f} | Total R^2: {total_r2_test:.4%}")
+    print(f"Training Set  - Mean MSE: {np.nanmean(val_mses):.6e} | Mean RMSE: {np.nanmean(val_rmse):.6f} | Total R^2: {total_r2_train:.4%}")
+    print(f"Testing Set   - Mean MSE: {np.nanmean(val_mses_test):.6e} | Mean RMSE: {np.nanmean(val_rmse_test):.6f} | Total R^2: {total_r2_test:.4%}")
 
     #%% Arbitrage Analysis (Gatheral & Jacquier / FuNVol Section 4)
     print("\n=== Francois et al. (2022) Model - Arbitrage Analysis ===")
