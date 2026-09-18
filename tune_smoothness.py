@@ -4,10 +4,10 @@ import os
 import pickle
 import json
 import numpy as np
-from factorRepresentation_dayWeighted_penalizedEigenBasis import FPCA_penalized
+from factorRepresentation_dayWeighted_penalizedEigenBasis_ArbPenality import FPCA_penalized_arbPenal
 
 def main():
-    parser = argparse.ArgumentParser(description="Tune FPCA smoothness penalties using Cross-Validation.")
+    parser = argparse.ArgumentParser(description="Tune FPCA smoothness penalties (arbitrage-penalized model) using Cross-Validation.")
     
     # Data arguments
     parser.add_argument("--data_path", type=str, default="data/DJX_data/DJX_lists_traded.pkl",
@@ -58,13 +58,13 @@ def main():
                         help="Convergence threshold for the FPC fitting algorithm.")
     
     # Output arguments
-    parser.add_argument("--output_prefix", type=str, default="cv_tuning",
+    parser.add_argument("--output_prefix", type=str, default="cv_tuning_arbPenal",
                         help="Prefix for the saved results and parameters JSON files.")
-    
+
     args = parser.parse_args()
-    
+
     print("="*60)
-    print("FPCA Smoothness Penalty Cross-Validation Tuner")
+    print("FPCA_penalized_arbPenal Smoothness Penalty Cross-Validation Tuner")
     print("="*60)
     
     # 1. Load Data
@@ -119,8 +119,8 @@ def main():
         print(f"Loaded {len(previous_BList)} previous FPC(s).")
         
     # 3. Instantiate model
-    print("Initializing FPCA model instance...")
-    fpca = FPCA_penalized(
+    print("Initializing FPCA_penalized_arbPenal model instance...")
+    fpca = FPCA_penalized_arbPenal(
         logMoneyness, tau, iv,
         nb_spline_moneyness=args.nb_spline_moneyness,
         nb_spline_tau=args.nb_spline_tau,

@@ -3,7 +3,7 @@ import argparse
 import os
 import pickle
 import numpy as np
-from factorRepresentation_dayWeighted_penalizedEigenBasis import FPCA_penalized
+from factorRepresentation_dayWeighted_penalizedEigenBasis_ArbPenality import FPCA_penalized_arbPenal
 
 def main():
     parser = argparse.ArgumentParser(description="Estimate a specific FPC, loading previous components if needed, and saving the scores and eigenfunctions.")
@@ -137,8 +137,8 @@ def main():
     maxTau = np.ceil(np.max([np.max(t) for t in tau])*10)/10
     minTau = np.floor(np.min([np.min(t) for t in tau])*10)/10
     
-    print("Initializing FPCA model instance...")
-    fpca = FPCA_penalized(
+    print("Initializing FPCA_penalized_arbPenal model instance...")
+    fpca = FPCA_penalized_arbPenal(
         logMoneyness, tau, iv,
         nb_spline_moneyness=args.nb_spline_moneyness,
         nb_spline_tau=args.nb_spline_tau,

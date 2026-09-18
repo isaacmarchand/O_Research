@@ -52,7 +52,7 @@ class FPCA_penalized_arbPenal:
         # Create list of Bs containing all the matrix B fitted so far for the FPCs 
         self.BList = []
        
-    def first_FPC_fit(self, threshold = 1e-4, maxit = 10, omega_m = 1.0, omega_m2 = 0.0, omega_t = 1.0, d_m = 2, d_m2 = 3, d_t = 2, monotone = True):
+    def first_FPC_fit(self, threshold = 1e-4, maxit = 10, omega_m = 1.0, omega_m2 = 0.0, omega_t = 1.0, d_m = 2, d_m2 = 3, d_t = 2, monotone = True, near_convergence_threshold = 0.01):
         """
         Estimate the first FPC and its scores.
 
@@ -66,6 +66,9 @@ class FPCA_penalized_arbPenal:
         - d_m2: order of the second difference penalty for moneyness
         - d_t: order of the difference penalty for tau
         - monotone: if True, enforces total volatility monotonicity on the first FPC
+        - near_convergence_threshold: the monotonicity penalty is only switched on once the
+          relative MSE change drops below this value (i.e. once the unconstrained fit is nearly
+          converged), rather than from the first iteration. Ignored if monotone is False.
 
         Returns:
         - scores: List of array of estimated scores for the first FPC
@@ -103,7 +106,10 @@ class FPCA_penalized_arbPenal:
         P_1 = self._build_monotone_operator()
         omegaMonotone = 1e6
         delta = np.zeros((S_tau - 1) * S_m) + 0.001
-        
+
+        # Only switch on the monotonicity penalty once the unconstrained fit is near convergence
+        arb_active = False
+
         while j < maxit:
             scores = []
             mse_list = []
@@ -133,9 +139,13 @@ class FPCA_penalized_arbPenal:
             
             if maxBChange < threshold:
                 break
-            
+
+            if not arb_active and np.abs(avg_mse - old_mse) / old_mse < near_convergence_threshold:
+                arb_active = True
+                print(f'FPC 1: near convergence (MSE change < {near_convergence_threshold:.2%}) -- activating monotonicity penalty from iteration {j+1} onward')
+
             old_mse = avg_mse
-            
+
             # Minimize loss for beta
             # (sum_XWX + P) @ Beta = sum_XWy
             n_Beta = self.nb_spline_moneyness * self.nb_spline_tau
@@ -161,7 +171,7 @@ class FPCA_penalized_arbPenal:
                 sum_XWX += W_i * (alpha_i**2) * (X_i.T @ X_i)
                 sum_XWy += W_i * alpha_i * (X_i.T @ implVol_clean)
             
-            if monotone:
+            if monotone and arb_active:
                 Beta = self._solve_monotone_beta(sum_XWX, sum_XWy, P, P_1, delta, omegaMonotone=omegaMonotone)
             else:
                 # Solve penalized normal equations
@@ -179,13 +189,32 @@ class FPCA_penalized_arbPenal:
             
             maxBChange = np.max(np.abs(B - old_B))
             old_B = B
-        
+
+            # # Convergence check moved here (after fitting the FEC) instead of right after fitting
+            # # the scores, since the FEC is the one subject to the arbitrage (monotonicity) penalty.
+            # mse_list = []
+            # for i in range(len(self.cleaned_data)):
+            #     m_clean, tau_clean, implVol_clean = self.cleaned_data[i]
+            #     if len(implVol_clean) == 0:
+            #         continue
+            #     X = self.evaluator(B, np.column_stack([m_clean, tau_clean])).reshape(-1, 1)
+            #     pred = scores[i] * X.flatten()
+            #     mse_list.append(np.mean((implVol_clean - pred)**2))
+
+            # avg_mse = np.mean(mse_list)
+            # print(f'FPC 1, Iteration {j} : MSE change = {(avg_mse - old_mse) / old_mse}, Max B Change = {maxBChange}')
+            # converged = (np.abs(avg_mse - old_mse) / old_mse < threshold) or (maxBChange < threshold)
+            # old_mse = avg_mse
+            # if converged:
+            #     break
+
         self.scoreMat[:, 0] = scores
         self.BList.append(B)
         return scores, B
         
-    def subsequent_FPC_fit(self, threshold = 1e-4, maxit = 10, omega_m = 1.0, omega_m2 = 0.0, omega_t = 1.0, 
-                           d_m = 2, d_m2 = 3, d_t = 2, bound_calendar = True, q_lower = 99, q_upper = 1, omega_bound = 1e6):
+    def subsequent_FPC_fit(self, threshold = 1e-4, maxit = 10, omega_m = 1.0, omega_m2 = 0.0, omega_t = 1.0,
+                           d_m = 2, d_m2 = 3, d_t = 2, bound_calendar = True, q_lower = 99, q_upper = 1, omega_bound = 1e6,
+                           near_convergence_threshold = 0.01):
         """
         Estimate subsequent FPCs and their scores conditional on the FPC being orthogonal to all previous FPCs
         and optionally bounded by an envelope ensuring non-decreasing total volatility across sample days.
@@ -203,6 +232,9 @@ class FPCA_penalized_arbPenal:
         - q_lower: percentile for lower bound envelope (default 99)
         - q_upper: percentile for upper bound envelope (default 1)
         - omega_bound: weight for envelope boundary penalty (default 1e6)
+        - near_convergence_threshold: the calendar envelope penalty is only switched on once the
+          relative MSE change drops below this value (i.e. once the unconstrained fit is nearly
+          converged), rather than from the first iteration. Ignored if bound_calendar is False.
 
         Returns:
         - scores: List of array of estimated scores for the current FPC
@@ -252,9 +284,12 @@ class FPCA_penalized_arbPenal:
         P = omega_m * P_m + omega_m2 * P_m2 + omega_t * P_t
         
         P_1 = self._build_monotone_operator()
-        
+
+        # Only switch on the calendar envelope penalty once the unconstrained fit is near convergence
+        arb_active = False
+
         while j < maxit:
-            mse_list = []  
+            mse_list = []
             for i in range(len(self.cleaned_data)):
                 m_clean, tau_clean, implVol_clean = self.cleaned_data[i]
                 resid_i = cleaned_residuals[i]
@@ -282,9 +317,13 @@ class FPCA_penalized_arbPenal:
             
             if maxBChange < threshold:
                 break
-            
+
+            if not arb_active and np.abs(avg_mse - old_mse) / old_mse < near_convergence_threshold:
+                arb_active = True
+                print(f'FPC {curr_fpc_idx}: near convergence (MSE change < {near_convergence_threshold:.2%}) -- activating calendar envelope penalty from iteration {j+1} onward')
+
             old_mse = avg_mse
-            
+
             # Minimize loss for Beta subject to orthogonality constraints
             n_Beta = self.nb_spline_moneyness * self.nb_spline_tau
             sum_XWX = np.zeros((n_Beta, n_Beta))
@@ -317,7 +356,7 @@ class FPCA_penalized_arbPenal:
                 A_list.append((self.W_m @ prev_B @ self.W_t).flatten())
             A = np.array(A_list)
             
-            if bound_calendar and len(self.BList) > 0:
+            if bound_calendar and arb_active and len(self.BList) > 0:
                 L_k, U_k = self._compute_calendar_envelope_bounds(P_1, q_lower=q_lower, q_upper=q_upper)
                 Beta = self._solve_kkt_with_envelope(sum_XWX, sum_XWy, P, A, P_1, L_k, U_k, omega_bound=omega_bound)
             else:
@@ -349,6 +388,25 @@ class FPCA_penalized_arbPenal:
             
             maxBChange = np.max(np.abs(B - old_B))
             old_B = B
+            
+            # # Convergence check moved here (after fitting the FEC) instead of right after fitting
+            # # the scores, since the FEC is the one subject to the arbitrage (envelope) penalty.
+            # mse_list = []
+            # for i in range(len(self.cleaned_data)):
+            #     m_clean, tau_clean, implVol_clean = self.cleaned_data[i]
+            #     resid_i = cleaned_residuals[i]
+            #     if len(implVol_clean) == 0:
+            #         continue
+            #     psi_k = self.evaluator(B, np.column_stack([m_clean, tau_clean]))
+            #     pred = self.scoreMat[i, -1] * psi_k
+            #     mse_list.append(np.mean((resid_i - pred)**2))
+
+            # avg_mse = np.mean(mse_list)
+            # print(f'FPC {curr_fpc_idx}, Iteration {j} : MSE change = {(avg_mse - old_mse) / old_mse}, Max B Change = {maxBChange}')
+            # converged = (np.abs(avg_mse - old_mse) / old_mse < threshold) or (maxBChange < threshold)
+            # old_mse = avg_mse
+            # if converged:
+            #     break
             
         self.BList.append(B)
         return self.scoreMat[:, -1].tolist(), B
@@ -1479,13 +1537,13 @@ if __name__ == '__main__':
     
     print(fpca.compute_explained_variance())
     
-    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_traded_FPCA_arbPenal.pkl", "wb") as f:
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_traded_FPCA_arbPenal_fast.pkl", "wb") as f:
         pickle.dump(fpca.scoreMat, f)
         pickle.dump(fpca.BList, f)
     
     #%% Load Basis representation fit
     fpca = FPCA_penalized_arbPenal(logMoneyness, tau, iv, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
-    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_traded_FPCA_arbPenal.pkl", "rb") as f:
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_traded_FPCA_arbPenal_fast.pkl", "rb") as f:
         fpca.scoreMat = pickle.load(f)
         fpca.BList = pickle.load(f)
         
@@ -1519,11 +1577,13 @@ if __name__ == '__main__':
     nbDays = len(fpca.cleaned_data)
     nbCalendar = np.zeros(nbDays)
     nbButterfly = np.zeros(nbDays)
+    calendar_metrics = np.zeros((nbDays,50,50))
+    butterfly_metrics = np.zeros((nbDays,50,50))
     for i in range(nbDays):
         day_scores = fpca.scoreMat[i, :]
-        calendar_metrics, butterfly_metrics = fpca.compute_arbitrage_metrics(day_scores)
-        nbCalendar[i] = np.sum(calendar_metrics < 0)
-        nbButterfly[i] = np.sum(butterfly_metrics < 0)
+        calendar_metrics[i,:], butterfly_metrics[i,:] = fpca.compute_arbitrage_metrics(day_scores)
+        nbCalendar[i] = np.sum(calendar_metrics[i,:] < 0)
+        nbButterfly[i] = np.sum(butterfly_metrics[i,:] < 0)
     
     uniqueDates_dates = pd.to_datetime(uniqueDates)
     plt.plot(uniqueDates_dates, nbButterfly/(50*50), label="But. arb.")

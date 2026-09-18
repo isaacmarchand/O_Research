@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # ==============================================================================
-# FPCA Sequential Tuning and Estimation Pipeline for First 3 FPCs
+# FPCA_penalized_arbPenal Sequential Tuning and Estimation Pipeline for First 3 FPCs
+# (arbitrage-penalized model: factorRepresentation_dayWeighted_penalizedEigenBasis_ArbPenality.py)
 # Prevent Mac sleep during execution using caffeinate
 # ==============================================================================
 
@@ -39,7 +40,7 @@ OMEGA_T_GRID="0.005 0.01 0.025 0.05"
 
 # Spline basis specifications
 NB_SPLINE_MONEYNESS=30
-NB_SPLINE_TAU=36
+NB_SPLINE_TAU=30
 ORDER_MONEYNESS=4
 ORDER_TAU=4
 
@@ -48,7 +49,7 @@ ORDER_TAU=4
 # Fit/Optimization iterations
 MAXIT=30
 THRESHOLD=1e-4
-OUTPUT_PREFIX="cv_tuning_sequential"
+OUTPUT_PREFIX="cv_tuning_arbPenal_sequential"
 
 # ------------------------------------------------------------------------------
 # BASH INITIALIZATION AND ARGUMENT ASSEMBLY
@@ -108,9 +109,9 @@ MODEL_ARGS=(
 )
 
 # Output pickle paths
-FPC0_OUT="data/DJX_data/fpc0_fitted.pkl"
-FPC1_OUT="data/DJX_data/fpc1_fitted.pkl"
-FPC2_OUT="data/DJX_data/fpc2_fitted.pkl"
+FPC0_OUT="data/DJX_data/fpc0_fitted_arbPenal.pkl"
+FPC1_OUT="data/DJX_data/fpc1_fitted_arbPenal.pkl"
+FPC2_OUT="data/DJX_data/fpc2_fitted_arbPenal.pkl"
 
 # Helper function to parse JSON results for best hyperparameters
 get_best_param() {
