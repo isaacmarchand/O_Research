@@ -10,7 +10,6 @@ import pickle as pickle
 
 
 #%%
-
 class FPCA_penalized_arbPenal:
     def __init__(self, moneyness, tau, implVol, nb_spline_moneyness = 10, nb_spline_tau = 10, order_moneyness = 4, order_tau = 4, S=None, r=None, q=None, range_moneyness = [-.15, .15], range_tau = [0, 1], dailyWeights = None):
         self.S = S
@@ -911,9 +910,6 @@ class FPCA_penalized_arbPenal:
         
         return call_prices
 
-    # Alias for consistency with other files
-    ivs_to_price_surface = implVol_to_price_surface
-
     def compute_explained_variance(self):
         """
         Computes the proportion of variance explained by each FPC using reconstruction.
@@ -1102,10 +1098,6 @@ class FPCA_penalized_arbPenal:
         ax.view_init(elev=15, azim=figAngle)
         plt.legend()
         plt.show()
-
-    # Aliases for convenience
-    plot_reconstruction_ivs = plot_reconstruction
-    plot_reconstruction_implVol = plot_reconstruction
 
     def compute_arbitrage_metrics(self, scores, m_grid=None, tau_grid=None):
         """
