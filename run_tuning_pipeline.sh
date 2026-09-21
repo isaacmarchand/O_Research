@@ -30,13 +30,13 @@ N_SPLITS=5
 TRAIN_WINDOW_SIZE=2000           # Training window size (empty ("") for expanding window)
 TEST_WINDOW_SIZE=30            # Validation window size (empty ("") for default)
 THETA_CAL=1.0                   # Calendar arbitrage penalty weight
-THETA_BUT=1.0                   # Butterfly arbitrage penalty weight
+THETA_BUT=0.5                  # Butterfly arbitrage penalty weight
 FRICTION_TOL=0.001               # Tolerance for arbitrage check
 
 # Grid search spaces (space-separated lists)
-OMEGA_M_GRID="0.025 0.05 0.1 0.2 .5"
-OMEGA_M2_GRID="0.0 0.01 0.025 .05 .1"
-OMEGA_T_GRID="0.005 0.01 0.025 0.05"
+OMEGA_M_GRID="0.1 .5"
+OMEGA_M2_GRID="0.0 .05 .1"
+OMEGA_T_GRID="0.0 0.01"
 
 # Spline basis specifications
 NB_SPLINE_MONEYNESS=30
@@ -47,7 +47,7 @@ ORDER_TAU=4
 
 
 # Fit/Optimization iterations
-MAXIT=30
+MAXIT=40
 THRESHOLD=1e-4
 OUTPUT_PREFIX="cv_tuning_arbPenal_sequential"
 

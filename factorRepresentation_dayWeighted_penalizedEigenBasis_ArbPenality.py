@@ -1525,25 +1525,25 @@ if __name__ == '__main__':
     sqrtTau_test = [np.sqrt(t) for t in tau_test]
     
     #%% Estimate the First few FPCs
-    fpca = FPCA_penalized_arbPenal(logMoneyness, tau, iv, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
-    alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=0.05, omega_m2= 0.05, omega_t=0.05, monotone=True)
+    fpca = FPCA_penalized_arbPenal(logMoneyness, tau, iv, nb_spline_moneyness = 30, nb_spline_tau = 30, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
+    alpha1, B1 = fpca.first_FPC_fit(maxit=20, omega_m=0.1, omega_m2= 0.1, omega_t=0.005, monotone=True)
     fpca.plot_eigen_functions(B1, num_points=50, figAngle=-70)
     
-    alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.025, omega_m2= 0.0, omega_t=0.025, bound_calendar = True, q_lower = 100, q_upper = 0)
+    alpha2, B2 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.5, omega_m2= 0.1, omega_t=0.005, bound_calendar = True, q_lower = 100, q_upper = 0)
     fpca.plot_eigen_functions(B2, num_points=50, figAngle=-70)
     
-    alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.2, omega_m2= 0.1, omega_t=0.025, bound_calendar = True, q_lower = 100, q_upper = 0)
+    alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.5, omega_m2= 0.05, omega_t=0.001, bound_calendar = True, q_lower = 100, q_upper = 0)
     fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
     
     print(fpca.compute_explained_variance())
     
-    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_traded_FPCA_arbPenal_fast.pkl", "wb") as f:
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_traded_FPCA_arbPenal_fast_CVed.pkl", "wb") as f:
         pickle.dump(fpca.scoreMat, f)
         pickle.dump(fpca.BList, f)
     
     #%% Load Basis representation fit
-    fpca = FPCA_penalized_arbPenal(logMoneyness, tau, iv, nb_spline_moneyness = 30, nb_spline_tau = 36, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
-    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_traded_FPCA_arbPenal_fast.pkl", "rb") as f:
+    fpca = FPCA_penalized_arbPenal(logMoneyness, tau, iv, nb_spline_moneyness = 30, nb_spline_tau = 30, order_moneyness = 4, order_tau = 4, range_moneyness=[-.15,.15])
+    with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_traded_FPCA_arbPenal_fast_CVed.pkl", "rb") as f:
         fpca.scoreMat = pickle.load(f)
         fpca.BList = pickle.load(f)
         
