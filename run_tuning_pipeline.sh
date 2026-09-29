@@ -27,9 +27,9 @@ N_DAYS=""                       # Number of days to limit (empty to use all days
 
 # Cross-Validation parameters
 N_SPLITS=5
-TRAIN_WINDOW_SIZE=2000           # Training window size (empty ("") for expanding window)
-TEST_WINDOW_SIZE=30            # Validation window size (empty ("") for default)
-THETA_CAL=1.0                   # Calendar arbitrage penalty weight
+TRAIN_WINDOW_SIZE=1500           # Training window size (empty ("") for expanding window)
+TEST_WINDOW_SIZE=200            # Validation window size (empty ("") for default)
+THETA_CAL=1                  # Calendar arbitrage penalty weight
 THETA_BUT=0.5                  # Butterfly arbitrage penalty weight
 FRICTION_TOL=0.001               # Tolerance for arbitrage check
 
@@ -40,7 +40,7 @@ OMEGA_T_GRID="0.0 0.01"
 
 # Spline basis specifications
 NB_SPLINE_MONEYNESS=30
-NB_SPLINE_TAU=30
+NB_SPLINE_TAU=36
 ORDER_MONEYNESS=4
 ORDER_TAU=4
 
