@@ -1535,6 +1535,12 @@ if __name__ == '__main__':
     alpha3, B3 = fpca.subsequent_FPC_fit(maxit=30, omega_m=0.5, omega_m2= 0.0, omega_t=0.01, bound_calendar = True, q_lower = 100, q_upper = 0)
     fpca.plot_eigen_functions(B3, num_points=50, figAngle=-70)
     
+    # alpha4, B4 = fpca.subsequent_FPC_fit(maxit=40, omega_m=0.5, omega_m2= 0.0, omega_t=0.01, bound_calendar = True, q_lower = 100, q_upper = 0)
+    # fpca.plot_eigen_functions(B4, num_points=50, figAngle=-70)
+    
+    # alpha5, B5 = fpca.subsequent_FPC_fit(maxit=40, omega_m=0.5, omega_m2= 0.0, omega_t=0.01, bound_calendar = True, q_lower = 100, q_upper = 0)
+    # fpca.plot_eigen_functions(B5, num_points=50, figAngle=-70)
+    
     print(fpca.compute_explained_variance())
     
     with open("/Users/macbook/Documents/global_O_Research/O_Research/data/DJX_data/DJX_traded_FPCA_arbPenal_fast_CVed.pkl", "wb") as f:
