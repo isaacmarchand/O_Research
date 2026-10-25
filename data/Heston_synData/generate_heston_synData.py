@@ -13,8 +13,17 @@ The generator mimics the irregular and sparse observation design of the traded D
     3. Out-of-the-money option prices are computed under Q with the Lewis (2001) single-integral
        formula using a Black-Scholes control variate, integrated with Gauss-Legendre quadrature.
     4. Prices are inverted to Black-Scholes implied volatilities (vectorized bisection). Quotes
-       below a minimum price are discarded (they would not trade), and observation noise is added
-       as a price-space bid-ask perturbation mapped to volatility through the vega.
+       below a minimum price are discarded (they would not trade).
+
+Purpose: an ARBITRAGE-FREE benchmark. By default the observed IVs are the exact Heston IVs (no
+observation noise) and rates/dividends are zero (carry='zero_rates'), so that the forward equals the
+spot and ln(K/S) = ln(K/F). Under this setting the static no-arbitrage conditions used by
+FPCA_penalized_arbPenal (monotone total variance in tau at fixed ln(K/S), Gatheral's g(m) >= 0, and the
+price-based vertical / butterfly / calendar checks at fixed strike) are exact, and the generated data
+satisfy all of them (see check_static_arbitrage_grid and the verification cell in __main__).
+Optional bid-ask noise (design['noise_scale'] > 0) and non-zero rates (carry='zero_carry' or
+'stochastic') are kept for robustness experiments; with carry='stochastic' (r != q) the IV-space
+conditions at fixed ln(K/S) are no longer exact no-arbitrage conditions.
 
 Observations are restricted to the domain of the FPCA model, ln(K/S) in [-0.15, 0.15] and tau in (0, 1],
 and the trading calendar (hence the train/test split) is taken from the DJX / SPX lists.
@@ -58,11 +67,15 @@ class HestonSyntheticIVS:
         Drift of the spot under P.
     S0 : float
         Initial spot.
+    carry : {'zero_rates', 'zero_carry', 'stochastic'}
+        'zero_rates': r = q = 0 (forward = spot, no discounting; all arbitrage checks are exact).
+        'zero_carry': Vasicek r and q(tau) = r(tau) (forward = spot, but prices are discounted).
+        'stochastic': Vasicek r and constant dividend yield q.
     q : float
-        Continuous dividend yield (constant).
+        Continuous dividend yield (constant), used only with carry='stochastic'.
     r0, r_mean, r_speed, r_vol : float
-        Vasicek short-rate dynamics; r_slope adds a deterministic term-structure slope
-        r(tau) = r_t + r_slope * (1 - exp(-tau / 0.5)).
+        Vasicek short-rate dynamics (ignored with carry='zero_rates'); r_slope adds a deterministic
+        term-structure slope r(tau) = r_t + r_slope * (1 - exp(-tau / 0.5)).
     theta_vol, theta_speed : float
         Volatility and mean-reversion speed of the OU process driving log(theta_t / theta).
         theta_vol = 0 recovers the pure (constant-parameter) Heston model.
@@ -71,13 +84,15 @@ class HestonSyntheticIVS:
     """
 
     def __init__(self, kappa=3.0, theta=0.04, sigma=0.45, rho=-0.7, v0=0.03,
-                 kappa_P=None, theta_P=None, mu=0.07, S0=100.0, q=0.018,
+                 kappa_P=None, theta_P=None, mu=0.07, S0=100.0, carry="zero_rates", q=0.018,
                  r0=0.01, r_mean=0.025, r_speed=0.3, r_vol=0.006, r_slope=0.004,
                  theta_vol=0.0, theta_speed=1.0, seed=20261025):
+        if carry not in ("zero_rates", "zero_carry", "stochastic"):
+            raise ValueError("carry must be 'zero_rates', 'zero_carry' or 'stochastic'")
         self.kappa, self.theta, self.sigma, self.rho, self.v0 = kappa, theta, sigma, rho, v0
         self.kappa_P = kappa if kappa_P is None else kappa_P
         self.theta_P = theta if theta_P is None else theta_P
-        self.mu, self.S0, self.q = mu, S0, q
+        self.mu, self.S0, self.carry, self.q = mu, S0, carry, q
         self.r0, self.r_mean, self.r_speed, self.r_vol, self.r_slope = r0, r_mean, r_speed, r_vol, r_slope
         self.theta_vol, self.theta_speed = theta_vol, theta_speed
         self.seed = seed
@@ -181,7 +196,8 @@ class HestonSyntheticIVS:
         rng = self.rng
 
         logS, v, r, y = np.empty(n), np.empty(n), np.empty(n), np.empty(n)
-        logS[0], v[0], r[0], y[0] = np.log(self.S0), self.v0, self.r0, 0.0
+        logS[0], v[0], y[0] = np.log(self.S0), self.v0, 0.0
+        r[0] = 0.0 if self.carry == "zero_rates" else self.r0
         sq_rho = np.sqrt(1.0 - self.rho ** 2)
 
         for t in range(n - 1):
@@ -189,10 +205,11 @@ class HestonSyntheticIVS:
             h = dt / n_sub
             x_cur, v_cur = logS[t], v[t]
             Z = rng.standard_normal((n_sub, 2))
+            q_t = self.dividend_curve(r[t], 0.0)
             for j in range(n_sub):
                 v_pos = max(v_cur, 0.0)
                 sv = np.sqrt(v_pos * h)
-                x_cur += (self.mu - self.q - 0.5 * v_pos) * h + sv * Z[j, 0]
+                x_cur += (self.mu - q_t - 0.5 * v_pos) * h + sv * Z[j, 0]
                 v_cur += self.kappa_P * (self.theta_P - v_pos) * h \
                     + self.sigma * sv * (self.rho * Z[j, 0] + sq_rho * Z[j, 1])
             logS[t + 1], v[t + 1] = x_cur, v_cur
@@ -200,6 +217,8 @@ class HestonSyntheticIVS:
             e_r = np.exp(-self.r_speed * dt)
             r[t + 1] = self.r_mean + (r[t] - self.r_mean) * e_r \
                 + self.r_vol * np.sqrt((1.0 - e_r ** 2) / (2.0 * self.r_speed)) * rng.standard_normal()
+            if self.carry == "zero_rates":
+                r[t + 1] = 0.0
             e_y = np.exp(-self.theta_speed * dt)
             y[t + 1] = y[t] * e_y \
                 + self.theta_vol * np.sqrt((1.0 - e_y ** 2) / (2.0 * self.theta_speed)) * rng.standard_normal()
@@ -210,12 +229,19 @@ class HestonSyntheticIVS:
             "v": np.maximum(v, self.v_floor),
             "v_raw": v,
             "r_short": r,
-            "q": self.q,
+            "q_short": self.dividend_curve(r, 0.0),
             "theta_t": self.theta * np.exp(y - 0.5 * self.theta_vol ** 2 / (2.0 * self.theta_speed)),
         })
 
     def rate_curve(self, r_short, tau):
+        if self.carry == "zero_rates":
+            return np.zeros_like(np.asarray(r_short + tau, dtype=float))
         return r_short + self.r_slope * (1.0 - np.exp(-np.asarray(tau) / 0.5))
+
+    def dividend_curve(self, r_short, tau):
+        if self.carry == "stochastic":
+            return np.full_like(np.asarray(r_short + tau, dtype=float), self.q)
+        return self.rate_curve(r_short, tau)          # zero carry: q(tau) = r(tau), forward = spot
 
     # ------------------------------------------------------------------------------------------
     # Observation design (which options are "traded" on a given day)
@@ -278,6 +304,8 @@ class HestonSyntheticIVS:
     def _add_observation_noise(self, iv_true, p_norm, k, tau, F):
         """Price-space bid-ask noise: half-spread = max(tick, rel. spread * price), mapped to vol via vega."""
         d = self.design
+        if d["noise_scale"] == 0:
+            return iv_true.copy()
         s = iv_true * np.sqrt(tau)
         half_spread = 0.5 * np.maximum(d["tick_rel"], d["rel_spread"] * p_norm)
         vega = self._bs_vega_norm(k, s, tau)
@@ -304,8 +332,8 @@ class HestonSyntheticIVS:
 
         rows = []
         for tau in tau_listed[keep]:
-            r = self.rate_curve(r_short, tau)
-            F = S * np.exp((r - self.q) * tau)
+            r, q = self.rate_curve(r_short, tau), self.dividend_curve(r_short, tau)
+            F = S * np.exp((r - q) * tau)
             atm_vol = np.sqrt(theta_t + (v - theta_t) * (1 - np.exp(-self.kappa * tau)) / (self.kappa * tau))
             liquidity = min(1.0, day_liquidity * self.rng.lognormal(0.0, d["maturity_dispersion"]))
             K = self._sample_strikes(S, F, tau, atm_vol, liquidity, put_boost)
@@ -336,7 +364,7 @@ class HestonSyntheticIVS:
                 "price_true": p_norm * disc_F,
                 "midPrices": self._bs_otm_norm(k, iv_obs * np.sqrt(tau)) * disc_F,
                 "rfRate": r,
-                "dividendRate": self.q,
+                "dividendRate": q,
                 "cp_flag": np.where(k >= 0, "C", "P"),
             }))
         return rows
@@ -385,7 +413,7 @@ class HestonSyntheticIVS:
             "min_price_rel": 1e-4,       # options cheaper than 1e-4 * S do not trade
             "tick_rel": 5e-4,            # quoted bid-ask tick relative to S
             "rel_spread": 0.04,          # relative bid-ask spread
-            "noise_scale": 0.5,          # std of the mid deviation in units of the half-spread
+            "noise_scale": 0.0,          # std of the mid deviation in units of the half-spread (0 = exact Heston IVs)
             "max_rel_noise": 0.5,        # cap of |noise| relative to the true IV
         }
 
@@ -402,12 +430,39 @@ class HestonSyntheticIVS:
         out = np.full((len(self.latent), len(tau_grid), len(logm_grid)), np.nan)
         for t, state in self.latent.iterrows():
             for j, tau in enumerate(tau_grid):
-                r = self.rate_curve(state["r_short"], tau)
-                k = logm_grid - (r - self.q) * tau          # ln(K/F) = ln(K/S) - (r - q) tau
+                r, q = self.rate_curve(state["r_short"], tau), self.dividend_curve(state["r_short"], tau)
+                k = logm_grid - (r - q) * tau               # ln(K/F) = ln(K/S) - (r - q) tau
                 p_norm = self.heston_otm_price_norm(k, tau, state["v"], state["theta_t"])
                 iv = self.implied_vol(p_norm, k, tau)
                 out[t, j] = np.where(p_norm > 1e-7, iv, np.nan)
         return out
+
+    @staticmethod
+    def check_static_arbitrage_grid(iv_grid, logm_grid, tau_grid, tol=1e-10):
+        """
+        Static arbitrage diagnostics of IV surfaces on a fixed grid (exact when forward = spot):
+            calendar : total variance w = sigma^2 tau non-decreasing in tau at fixed ln(K/S)
+            butterfly: Gatheral's g(m) = (1 - m w_m / 2w)^2 - w_m^2 / 4 (1/w + 1/4) + w_mm / 2 >= 0
+        iv_grid has shape (n_days, len(tau_grid), len(logm_grid)); NaN cells are ignored.
+        Returns a dict with the number of checked cells, the number of violations and the extreme values.
+        """
+        w = iv_grid ** 2 * tau_grid[None, :, None]
+        dw = np.diff(w, axis=1) / np.diff(tau_grid)[None, :, None]
+
+        m, h = logm_grid, np.diff(logm_grid)
+        w_m = (w[:, :, 2:] - w[:, :, :-2]) / (m[2:] - m[:-2])
+        w_mm = 2.0 * ((w[:, :, 2:] - w[:, :, 1:-1]) / h[1:] - (w[:, :, 1:-1] - w[:, :, :-2]) / h[:-1]) / (h[1:] + h[:-1])
+        wc, mc = w[:, :, 1:-1], m[1:-1]
+        g = (1.0 - mc * w_m / (2.0 * wc)) ** 2 - w_m ** 2 / 4.0 * (1.0 / wc + 0.25) + w_mm / 2.0
+
+        return {
+            "calendar_cells": int(np.isfinite(dw).sum()),
+            "calendar_violations": int(np.sum(dw < -tol)),
+            "calendar_min_dw_dtau": float(np.nanmin(dw)),
+            "butterfly_cells": int(np.isfinite(g).sum()),
+            "butterfly_violations": int(np.sum(g < -tol)),
+            "butterfly_min_g": float(np.nanmin(g)),
+        }
 
     # ------------------------------------------------------------------------------------------
     # Saving
@@ -457,7 +512,7 @@ class HestonSyntheticIVS:
         params = {
             "heston_Q": {"kappa": self.kappa, "theta": self.theta, "sigma": self.sigma, "rho": self.rho, "v0": self.v0},
             "heston_P": {"kappa_P": self.kappa_P, "theta_P": self.theta_P, "mu": self.mu, "S0": self.S0},
-            "rates": {"q": self.q, "r0": self.r0, "r_mean": self.r_mean, "r_speed": self.r_speed,
+            "rates": {"carry": self.carry, "q": self.q, "r0": self.r0, "r_mean": self.r_mean, "r_speed": self.r_speed,
                       "r_vol": self.r_vol, "r_slope": self.r_slope},
             "theta_dynamics": {"theta_vol": self.theta_vol, "theta_speed": self.theta_speed},
             "design": self.design,
@@ -509,6 +564,24 @@ if __name__ == '__main__':
     tau_grid = np.concatenate([np.array([7, 14, 21, 30, 45, 60, 75, 90]) / 365, np.linspace(0.3, 1.0, 15)])
     iv_grid = gen.true_surface_grid(logm_grid, tau_grid)
 
+    #%% Verify the absence of static arbitrage
+    ###################################################################################################
+    # (i) IV-space conditions on the dense true grid (calendar on total variance, Gatheral's g)
+    print(gen.check_static_arbitrage_grid(iv_grid, logm_grid, tau_grid))
+
+    # (ii) price-based raw-data checks of FPCA_penalized_arbPenal on the observed (sparse) quotes
+    import sys
+    sys.path.insert(0, "/Users/macbook/Documents/global_O_Research/O_Research")
+    from factorRepresentation_dayWeighted_penalizedEigenBasis_ArbPenality import FPCA_penalized_arbPenal
+
+    groups = [g for _, g in data.groupby("date", sort=True)]
+    fpca_check = FPCA_penalized_arbPenal([g["logMoneyness"] for g in groups], [g["tau"] for g in groups],
+                                         [g["impl_volatility_computed"] for g in groups],
+                                         S=[g["assetPrices"].iloc[0] for g in groups],
+                                         r=[g["rfRate"].values for g in groups], q=[g["dividendRate"].values for g in groups])
+    raw_arb = fpca_check.measure_all_raw_arbitrage(tolerance=1e-8)
+    print(raw_arb[["calendar_violations", "vertical_violations", "butterfly_violations", "total_nb_observations"]].sum())
+
     #%% Save
     ###################################################################################################
     gen.save(OUT_DIR, n_test_days=n_test_days, prefix="Heston", grid={"logm": logm_grid, "tau": tau_grid, "iv": iv_grid})
@@ -551,7 +624,7 @@ if __name__ == '__main__':
     fig = plt.figure(figsize=(9, 6))
     ax = fig.add_subplot(111, projection="3d")
     ax.plot_surface(M, T, iv_grid[day], alpha=0.4, cmap="viridis")
-    ax.scatter(d_day["logMoneyness"], d_day["tau"], d_day["impl_volatility_computed"], c="r", s=10, label="observed (noisy)")
+    ax.scatter(d_day["logMoneyness"], d_day["tau"], d_day["impl_volatility_computed"], c="r", s=10, label="observed quotes")
     ax.set_xlabel(r"$\ln(K/S)$")
     ax.set_ylabel(r"$\tau$")
     ax.set_zlabel("IV")
